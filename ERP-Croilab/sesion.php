@@ -7,8 +7,25 @@
    =========================================================== */
 
 if (session_status() === PHP_SESSION_NONE) {
-    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
-    session_set_cookie_params(['lifetime'=>0,'path'=>'/','httponly'=>true,'samesite'=>'Lax','secure'=>$secure]);
+    /* Detección segura de HTTPS, compatible con proxies inversos (Cloudflare, LB). */
+    $isHttps = false;
+    if ((!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off')
+        || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
+        || (!empty($_SERVER['HTTP_X_FORWARDED_SSL']) && strtolower($_SERVER['HTTP_X_FORWARDED_SSL']) === 'on')
+        || (!empty($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443)
+        || (!empty($_SERVER['HTTP_FRONT_END_HTTPS']) && strtolower($_SERVER['HTTP_FRONT_END_HTTPS']) === 'on')
+        || (!empty($_SERVER['REQUEST_SCHEME']) && strtolower($_SERVER['REQUEST_SCHEME']) === 'https')) {
+        $isHttps = true;
+    }
+    $secure = $isHttps;
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path'     => '/',
+        'domain'   => $_SERVER['HTTP_HOST'] ?? null, /* evita compartir cookie entre subdominios no deseados */
+        'httponly' => true,
+        'samesite' => 'Strict',
+        'secure'   => $secure,
+    ]);
     session_name('croilab_portal');
     session_start();
 }
