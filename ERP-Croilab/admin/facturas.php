@@ -111,6 +111,19 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && can_edit()) {
     if ($f['cliente_nombre']==='' && $f['client_id']) { foreach($clients as $c){ if((int)$c['id']===$f['client_id']) $f['cliente_nombre']=$c['name']; } }
     if ($id) { $set=implode(', ',array_map(fn($k)=>"$k=:$k",array_keys($f))); $p=$f;$p['id']=$id; db()->prepare("UPDATE invoices SET $set WHERE id=:id")->execute($p); }
     else { $cols=implode(',',array_keys($f)); $ph=implode(',',array_map(fn($k)=>":$k",array_keys($f))); db()->prepare("INSERT INTO invoices ($cols) VALUES ($ph)")->execute($f); $id=(int)db()->lastInsertId(); }
+    /* Guardar la factura es un solo asunto: cabecera, líneas, fecha de pago y
+       apunte contable. Antes iban sueltos, y el orden era el peor posible: la
+       línea 116 borraba TODAS las líneas de la factura y la 121 las volvía a
+       insertar una a una. Si un solo INSERT fallaba (una línea duplicada, la
+       conexión cayéndose a media vuelta), el error se iba sin más y la factura
+       quedaba guardada y CONFIRMADA con cero líneas, y con la contabilidad
+       apuntando a una factura que ya no cuadra. Con la transacción, ese fallo
+       devuelve la factura a como estaba antes de tocar nada. */
+    /* La cabecera se ha escrito ya y entra en la transacción: por eso se abre
+       aquí y no una línea antes. */
+    $pdo = db();
+    db_tx_begin($pdo);
+    try {
     /* guardar los datos de facturación en la ficha del cliente (solo los que vengan rellenos) para reutilizarlos */
     if ($f['client_id']) { $upd=[]; $vals=[]; foreach(['fact_nombre'=>$f['cliente_nombre'],'fact_nif'=>$f['cliente_nif'],'fact_dir'=>$f['cliente_dir'],'fact_email'=>$f['cliente_email'],'fact_tel'=>$f['cliente_tel']] as $col=>$val){ if(trim((string)$val)!==''){ $upd[]="$col=?"; $vals[]=$val; } } if($upd){ $vals[]=$f['client_id']; db()->prepare('UPDATE clients SET '.implode(',',$upd).' WHERE id=?')->execute($vals); } }
     db()->prepare('DELETE FROM invoice_items WHERE invoice_id=?')->execute([$id]);
@@ -123,6 +136,18 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && can_edit()) {
     if ($f['estado']==='pagada') db()->prepare('UPDATE invoices SET fecha_pago=COALESCE(fecha_pago,?) WHERE id=?')->execute([date('Y-m-d'),$id]);
     else                        db()->prepare('UPDATE invoices SET fecha_pago=NULL WHERE id=?')->execute([$id]);
     fin_sync_accounting($id);
+    db_tx_commit($pdo);
+    } catch (Exception $e) {
+        /* Con una factura a medio guardar no se puede seguir: se deshace y se
+           avisa. El número ya gastado no se recupera (en una factura eso es lo
+           correcto: los números no se reutilizan, y una caja con huecos es
+           norma; una caja con números repetidos es un problema fiscal). */
+        db_tx_rollback($pdo);
+        error_log('facturas.php save ' . $id . ': ' . $e->getMessage());
+        $_SESSION['flash_error'] = 'No se ha podido guardar la factura: ' . $e->getMessage();
+        header('Location: ' . ($id ? 'facturas.php?v=' . $id : 'facturas.php'));
+        exit;
+    }
     header('Location: facturas.php?v='.$id); exit;
   } elseif ($a==='set_project') {
     $iid=(int)($_POST['id']??0); $projId=null; $psel=($_POST['project_id_sel']??'');
@@ -147,14 +172,34 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && can_edit()) {
   } elseif ($a==='del') {
     $id=(int)($_POST['id']??0);
     $fn=db()->prepare('SELECT numero,cliente_nombre FROM invoices WHERE id=?'); $fn->execute([$id]); $fRow=$fn->fetch();
-    /* Una factura sin sus líneas no sirve de nada: se guardan juntas, y también
-       su apunte contable, para que deshacer deje la contabilidad como estaba. */
+    /* Una factura sin sus líneas no sirve de nada: se borran juntas, y también
+       su apunte contable, para que deshacer deje la contabilidad como estaba.
+       Y en una sola transacción: pap_borrar() abre su propio nivel para hacer
+       atómica la foto, y con los helpers anidados todo el borrado es una cosa
+       sola. Antes, si el DELETE final de invoices fallaba, ya se habían
+       borrado las líneas y el apunte, y se confirmaba una factura vacía sin
+       asiento ni copia en la papelera. */
     $fNum=trim((string)($fRow['numero'] ?? ''));
-    pap_borrar_flash('invoices', $id, 'factura',
-        trim($fNum.' · '.(string)($fRow['cliente_nombre'] ?? ''), ' ·'),
-        [['tabla'=>'invoice_items','fk'=>'invoice_id'],['tabla'=>'accounting','fk'=>'invoice_id']],
-        $fNum!=='' ? 'Factura '.$fNum.' eliminada' : 'Factura eliminada');
-    db()->prepare('DELETE FROM invoice_items WHERE invoice_id=?')->execute([$id]); db()->prepare('DELETE FROM accounting WHERE invoice_id=?')->execute([$id]); db()->prepare('DELETE FROM invoices WHERE id=?')->execute([$id]);
+    $pdo = db();
+    db_tx_begin($pdo);
+    try {
+        $tid = pap_borrar_flash('invoices', $id, 'factura',
+            trim($fNum.' · '.(string)($fRow['cliente_nombre'] ?? ''), ' ·'),
+            [['tabla'=>'invoice_items','fk'=>'invoice_id'],['tabla'=>'accounting','fk'=>'invoice_id']],
+            $fNum!=='' ? 'Factura '.$fNum.' eliminada' : 'Factura eliminada');
+        /* pap_borrar() avisa de su fallo devolviendo 0, no lanzando, así que el
+           fallo se comprueba ANTES de confirmar. Sin esto, una factura que no se
+           pudo fotografiar se borraba igual y el usuario veía «eliminada» sin
+           nada en la papelera: una factura desaparecida y sin vuelta atrás. */
+        if (!$tid) throw new Exception('pap_borrar no ha devuelto id de papelera');
+        db_tx_commit($pdo);
+    } catch (Exception $e) {
+        db_tx_rollback($pdo);
+        error_log('facturas.php del ' . $id . ': ' . $e->getMessage());
+        $_SESSION['flash_error'] = 'No se ha podido eliminar la factura. No se ha tocado nada.';
+        header('Location: facturas.php?v=' . $id);
+        exit;
+    }
     header('Location: '.($_POST['ret']??'facturas.php')); exit;
   } elseif ($a==='dup') {
     $id=(int)($_POST['id']??0);

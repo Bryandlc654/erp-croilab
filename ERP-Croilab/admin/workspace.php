@@ -202,7 +202,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && can_edit()) {
     if ($a !== 'publicar') { header('Location: workspace.php?'.($_POST['ret'] ?? '')); exit; }
 }
 
-$clientsAll = db()->query('SELECT id, name FROM clients ORDER BY name')->fetchAll();
+/* Filtro de cliente. Antes era `SELECT id, name FROM clients ORDER BY name`, o sea
+   un <select> con un <option> por cliente en el HTML y sin forma de filtrar salvo
+   con la tecla del navegador. Ahora el buscador de admin/lib/clientes_buscador.php
+   trae solo los que encajan con lo que se teclea, acotado y respetando el alcance.
+   Los responsables (admins) sí se cargan enteros: es una tabla interna pequeña. */
+require_once __DIR__ . '/lib/clientes_buscador.php';
+if (($_GET['json'] ?? '') === '1' && isset($_GET['buscar'])) {
+    clientes_buscar_json($_GET['buscar'], 'workspace.php');
+}
+$clientsAll = clientes_buscar($_GET['buscar'] ?? '');
 $responsables = db()->query('SELECT id, username FROM admins ORDER BY username')->fetchAll();
 $respMap=[]; foreach($responsables as $r) $respMap[$r['id']]=$r['username'];
 
@@ -289,6 +298,12 @@ erp_head('kanban', 'Tareas');
 .ws-empmenu a:hover{background:var(--soft);color:var(--ink)}
 .ws-empmenu a.on{background:var(--accent-soft);color:var(--accent)}
 .ws-cli{margin-left:auto;border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:13px;background:#fff;max-width:230px;color:var(--ink)}
+/* Buscador de cliente: va pegado al <select>, que se queda como confirmación. */
+.ws-cli-q{margin-left:6px;border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:13px;background:#fff;max-width:170px;color:var(--ink);font-family:inherit}
+.ws-cli-q:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.ws-cli-hint{font-size:11px;color:var(--muted);max-width:170px;min-height:13px;line-height:1.35}
+[data-theme=dark] .ws-cli-q{background:#1f1f1f;color:#e6e6e6;border-color:#282828}
+@media(max-width:900px){.ws-cli-q{max-width:100%;width:100%;margin-left:0}.ws-cli-hint{max-width:100%;width:100%}}
 .tl-tab{background:none;border:none;border-bottom:2px solid transparent;padding:8px 12px;font-weight:600;font-size:13px;color:var(--muted);cursor:pointer;margin-bottom:-1px}
 .tl-tab:hover{color:var(--ink)}
 .tl-tab.on{color:var(--ink);border-bottom-color:var(--accent)}
@@ -581,10 +596,13 @@ erp_head('kanban', 'Tareas');
     <?php if (can_edit()): ?><form method="post" style="margin:0" onsubmit="return erpSubmitAsk(this,'¿Publicar ahora al Progreso del cliente?')"><input type="hidden" name="action" value="publicar"><input type="hidden" name="cli" value="<?= $cli ?>"><button class="txtbtn" type="submit"><?= ic('link',14) ?> Publicar al portal</button></form><?php endif; ?>
   </div>
   <?php endif; ?>
-  <select class="ws-cli" aria-label="Filtrar por cliente" onchange="if(this.value)location.href='workspace.php?view=cliente&cli='+this.value">
+  <select class="ws-cli" id="cliSel" aria-label="Filtrar por cliente" onchange="if(this.value)location.href='workspace.php?view=cliente&cli='+this.value">
     <option value="">Ir a un cliente…</option>
-    <?php foreach ($clientsAll as $c): ?><option value="<?= (int)$c['id'] ?>" <?= $cli==$c['id']?'selected':'' ?>><?= e($c['name']) ?></option><?php endforeach; ?>
+    <?= clientes_opciones($clientsAll, $cli) ?>
   </select>
+  <input class="ws-cli-q" id="cliQ" type="text" autocomplete="off" aria-label="Buscar cliente"
+         placeholder="Buscar cliente…" oninput="clientesBuscar(this.value, function(){ /* el <select> ya está */ })">
+  <div class="ws-cli-hint" id="cliHint" aria-live="polite"></div>
 </div>
 <?php if ($flash): ?><div class="card" style="border:1px solid #cfe9d6;color:var(--ok)"><?= e($flash) ?></div><?php endif; ?>
 
@@ -910,4 +928,5 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ws-cell')&&
 <form id="dtForm" method="post" style="display:none"><input type="hidden" name="action" value="del_task"><input type="hidden" name="cli" id="dtCli" value="<?= $cli ?>"><input type="hidden" name="id" id="dtId"><input type="hidden" name="ret" value="<?= e($retNow) ?>"></form>
 <form id="qeForm" method="post" style="display:none"><input type="hidden" name="action" value="quick_estado"><input type="hidden" name="cli" id="qeCli" value="<?= $cli ?>"><input type="hidden" name="id" id="qeId"><input type="hidden" name="estado" id="qeEstado"><input type="hidden" name="ret" value="<?= e($retNow) ?>"></form>
 <?php endif; ?>
+<?= clientes_js('workspace.php') ?>
 <?php erp_foot(); ?>

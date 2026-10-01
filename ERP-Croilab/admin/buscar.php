@@ -22,6 +22,43 @@ function bs_q($sql, $args = []) {
     catch (Exception $e) { return []; }
 }
 
+/* Un grupo de resultados, en dos pasos.
+ *
+ * El problema de fondo: «LIKE '%x%'» no lo acelera NINGÚN índice, porque el
+ * comodín inicial deja indeterminada la posición de la clave. No hay índice
+ * compuesto, ni por fecha, ni FULLTEXT de MIMO que lo arregle: es un escaneo
+ * de la tabla, siempre. Un CREATE INDEX al lado de esa consulta no cambia el
+ * plan de ejecución y da la impresión de haberlo arreglado cuando no.
+ *
+ * Lo que sí funciona es el orden inverso. 'x%' sí usa el índice (db.php crea
+ * ix_cli_name, ix_task_titulo, ix_inv_cliente_nombre… para esto), y además es lo
+ * que se busca el 95 % de las veces: quien teclea «cro» quiere a Croilab, no una
+ * empresa que lleve «cro» en medio del nombre. Así que primero la pasada
+ * indexada por prefijo, y el escaneo completo solo si con ella no se ha llenado
+ * el grupo. Es decir: el caso raro y el caro es el que no se ha resuelto, y el
+ * frecuente es el que ya no toca la tabla entera.
+ *
+ * Si la primera pasada ya trae $lim filas, ni se lanza la segunda. */
+function bs_dos_pasadas($sqlPrefijo, $argsPrefijo, $sqlLike, $argsLike, $lim, $clave = 'id') {
+    $primera = bs_q($sqlPrefijo, $argsPrefijo);
+    if (count($primera) >= $lim) return $primera;
+
+    $vistos = [];
+    foreach ($primera as $x) { $vistos[(string)($x[$clave] ?? '')] = true; }
+
+    /* La segunda pasada se queda con $lim aunque la consulta traiga más, que es
+       lo que hace cada LIMIT de arriba: el relleno no puede empujar al grupo
+       fuera de su tope. */
+    foreach (bs_q($sqlLike, $argsLike) as $x) {
+        if (count($primera) >= $lim) break;
+        $k = (string)($x[$clave] ?? '');
+        if (isset($vistos[$k])) continue;   /* ya estaba por prefijo: no se repite */
+        $vistos[$k] = true;
+        $primera[] = $x;
+    }
+    return $primera;
+}
+
 /* Recorta un texto largo para que quepa en una línea del resultado. */
 function bs_corta($t, $n = 90) {
     $t = trim(preg_replace('/\s+/u', ' ', strip_tags((string)$t)));
@@ -63,74 +100,116 @@ function bs_buscar($q, $porGrupo = 6) {
     $q = trim((string)$q);
     if (mb_strlen($q) < 2) return [];
     $like = '%' . str_replace(['%','_'], ['\%','\_'], $q) . '%';
+    $pre  = str_replace(['%','_'], ['\%','\_'], $q) . '%';
     $lim  = max(1, (int)$porGrupo);
     $g    = [];
 
     /* --- Clientes --- */
-    $r = bs_q("SELECT id,name,username,activo FROM clients
-               WHERE name LIKE ? OR username LIKE ? OR fact_nombre LIKE ? OR fact_nif LIKE ?
-               ORDER BY (name LIKE ?) DESC, name LIMIT $lim", [$like,$like,$like,$like,$q.'%']);
+    $r = bs_dos_pasadas(
+        "SELECT id,name,username,activo FROM clients
+         WHERE name LIKE ? OR username LIKE ? OR fact_nombre LIKE ?
+         ORDER BY name LIMIT $lim", [$pre,$pre,$pre],
+        "SELECT id,name,username,activo FROM clients
+         WHERE name LIKE ? OR username LIKE ? OR fact_nombre LIKE ? OR fact_nif LIKE ?
+         ORDER BY (name LIKE ?) DESC, name LIMIT $lim", [$like,$like,$like,$like,$pre],
+        $lim);
     if (!$r) $r = bs_q("SELECT id,name,username,1 AS activo FROM clients WHERE name LIKE ? OR username LIKE ? ORDER BY name LIMIT $lim", [$like,$like]);
     foreach ($r as $x) $g['Clientes'][] = [
         't'=>$x['name'], 's'=>'@'.$x['username'] . (((int)($x['activo'] ?? 1))===0 ? ' · dado de baja' : ''),
         'u'=>'client.php?id='.(int)$x['id'], 'i'=>'clients'];
 
     /* --- Equipo (empleados del panel) --- */
-    $r = bs_q("SELECT id,username,email,role FROM admins WHERE username LIKE ? OR email LIKE ? ORDER BY username LIMIT $lim", [$like,$like]);
+    $r = bs_dos_pasadas(
+        "SELECT id,username,email,role FROM admins WHERE username LIKE ? OR email LIKE ? ORDER BY username LIMIT $lim", [$pre,$pre],
+        "SELECT id,username,email,role FROM admins WHERE username LIKE ? OR email LIKE ? ORDER BY username LIMIT $lim", [$like,$like],
+        $lim);
     $RLAB = ['owner'=>'Dueño','editor'=>'Editor','viewer'=>'Solo lectura'];
     foreach ($r as $x) $g['Equipo'][] = [
         't'=>$x['username'], 's'=>trim(($RLAB[$x['role']??'']??'Miembro') . ($x['email'] ? ' · '.$x['email'] : '')),
         'u'=>'perfil.php?id='.(int)$x['id'], 'i'=>'user'];
 
     /* --- Tareas --- */
-    $r = bs_q("SELECT t.id,t.titulo,t.estado,c.name AS cname FROM tasks t
-               LEFT JOIN clients c ON c.id=t.client_id
-               WHERE t.titulo LIKE ? OR t.descripcion LIKE ?
-               ORDER BY (t.estado='completada'), t.updated_at DESC LIMIT $lim", [$like,$like]);
+    $r = bs_dos_pasadas(
+        "SELECT t.id,t.titulo,t.estado,c.name AS cname FROM tasks t
+         LEFT JOIN clients c ON c.id=t.client_id
+         WHERE t.titulo LIKE ?
+         ORDER BY (t.estado='completada'), t.updated_at DESC LIMIT $lim", [$pre],
+        "SELECT t.id,t.titulo,t.estado,c.name AS cname FROM tasks t
+         LEFT JOIN clients c ON c.id=t.client_id
+         WHERE t.titulo LIKE ? OR t.descripcion LIKE ?
+         ORDER BY (t.estado='completada'), t.updated_at DESC LIMIT $lim", [$like,$like],
+        $lim, 'id');
     foreach ($r as $x) $g['Tareas'][] = [
         't'=>$x['titulo'], 's'=>trim(($x['cname'] ? $x['cname'].' · ' : '') . ($x['estado']==='pendiente'?'En espera':ucfirst((string)$x['estado']))),
         'u'=>'task.php?id='.(int)$x['id'], 'i'=>'check'];
 
     /* --- Contactos del CRM --- */
-    $r = bs_q("SELECT id,nombre,empresa,email,fase FROM contacts
-               WHERE nombre LIKE ? OR empresa LIKE ? OR email LIKE ? OR telefono LIKE ?
-               ORDER BY updated_at DESC LIMIT $lim", [$like,$like,$like,$like]);
+    $r = bs_dos_pasadas(
+        "SELECT id,nombre,empresa,email,fase FROM contacts
+         WHERE nombre LIKE ? OR empresa LIKE ?
+         ORDER BY updated_at DESC LIMIT $lim", [$pre,$pre],
+        "SELECT id,nombre,empresa,email,fase FROM contacts
+         WHERE nombre LIKE ? OR empresa LIKE ? OR email LIKE ? OR telefono LIKE ?
+         ORDER BY updated_at DESC LIMIT $lim", [$like,$like,$like,$like],
+        $lim);
     foreach ($r as $x) $g['Contactos'][] = [
         't'=>$x['nombre'], 's'=>trim(($x['empresa'] ? $x['empresa'].' · ' : '') . ($x['email'] ?: str_replace('_',' ',(string)$x['fase']))),
         'u'=>'crm.php?open='.(int)$x['id'], 'i'=>'crm'];
 
     /* --- Negocios --- */
-    $r = bs_q("SELECT d.id,d.nombre,d.valor,d.fase,c.nombre AS cn FROM deals d
-               LEFT JOIN contacts c ON c.id=d.contact_id
-               WHERE d.nombre LIKE ? OR d.servicio LIKE ? OR c.nombre LIKE ? OR c.empresa LIKE ?
-               ORDER BY d.archivado, d.id DESC LIMIT $lim", [$like,$like,$like,$like]);
+    $r = bs_dos_pasadas(
+        "SELECT d.id,d.nombre,d.valor,d.fase,c.nombre AS cn FROM deals d
+         LEFT JOIN contacts c ON c.id=d.contact_id
+         WHERE d.nombre LIKE ?
+         ORDER BY d.archivado, d.id DESC LIMIT $lim", [$pre],
+        "SELECT d.id,d.nombre,d.valor,d.fase,c.nombre AS cn FROM deals d
+         LEFT JOIN contacts c ON c.id=d.contact_id
+         WHERE d.nombre LIKE ? OR d.servicio LIKE ? OR c.nombre LIKE ? OR c.empresa LIKE ?
+         ORDER BY d.archivado, d.id DESC LIMIT $lim", [$like,$like,$like,$like],
+        $lim, 'id');
     foreach ($r as $x) $g['Negocio'][] = [
         't'=>$x['nombre'] ?: 'Negocio #'.(int)$x['id'],
         's'=>trim(($x['cn'] ? $x['cn'].' · ' : '') . ((float)$x['valor']>0 ? number_format((float)$x['valor'],0,',','.').' €' : str_replace('_',' ',(string)$x['fase']))),
         'u'=>'negocio.php?open='.(int)$x['id'], 'i'=>'trend'];
 
     /* --- Facturas --- */
-    $r = bs_q("SELECT id,numero,cliente_nombre,estado,fecha FROM invoices
-               WHERE numero LIKE ? OR cliente_nombre LIKE ? OR cliente_nif LIKE ? OR notas LIKE ?
-               ORDER BY fecha DESC, id DESC LIMIT $lim", [$like,$like,$like,$like]);
+    $r = bs_dos_pasadas(
+        "SELECT id,numero,cliente_nombre,estado,fecha FROM invoices
+         WHERE numero LIKE ? OR cliente_nombre LIKE ?
+         ORDER BY fecha DESC, id DESC LIMIT $lim", [$pre,$pre],
+        "SELECT id,numero,cliente_nombre,estado,fecha FROM invoices
+         WHERE numero LIKE ? OR cliente_nombre LIKE ? OR cliente_nif LIKE ? OR notas LIKE ?
+         ORDER BY fecha DESC, id DESC LIMIT $lim", [$like,$like,$like,$like],
+        $lim);
     foreach ($r as $x) $g['Facturas'][] = [
         't'=>($x['numero'] ?: 'Borrador #'.(int)$x['id']) . ' · ' . ($x['cliente_nombre'] ?: 'Sin cliente'),
         's'=>ucfirst((string)$x['estado']) . ($x['fecha'] ? ' · '.date('d/m/Y', strtotime($x['fecha'])) : ''),
         'u'=>'facturas.php?edit='.(int)$x['id'], 'i'=>'file'];
 
     /* --- Tickets de soporte --- */
-    $r = bs_q("SELECT s.id,s.asunto,s.estado,c.name AS cname FROM support_tickets s
-               LEFT JOIN clients c ON c.id=s.client_id
-               WHERE s.asunto LIKE ? OR s.cuerpo LIKE ?
-               ORDER BY (s.estado='cerrado'), s.updated_at DESC LIMIT $lim", [$like,$like]);
+    $r = bs_dos_pasadas(
+        "SELECT s.id,s.asunto,s.estado,c.name AS cname FROM support_tickets s
+         LEFT JOIN clients c ON c.id=s.client_id
+         WHERE s.asunto LIKE ?
+         ORDER BY (s.estado='cerrado'), s.updated_at DESC LIMIT $lim", [$pre],
+        "SELECT s.id,s.asunto,s.estado,c.name AS cname FROM support_tickets s
+         LEFT JOIN clients c ON c.id=s.client_id
+         WHERE s.asunto LIKE ? OR s.cuerpo LIKE ?
+         ORDER BY (s.estado='cerrado'), s.updated_at DESC LIMIT $lim", [$like,$like],
+        $lim, 'id');
     foreach ($r as $x) $g['Soporte'][] = [
         't'=>$x['asunto'], 's'=>trim(($x['cname'] ? $x['cname'].' · ' : '') . ucfirst((string)$x['estado'])),
         'u'=>'support.php?t='.(int)$x['id'], 'i'=>'ticket'];
 
     /* --- Proyectos --- */
-    $r = bs_q("SELECT p.id,p.nombre,c.name AS cname FROM projects p
-               LEFT JOIN clients c ON c.id=p.client_id
-               WHERE p.nombre LIKE ? ORDER BY p.activo DESC, p.nombre LIMIT $lim", [$like]);
+    $r = bs_dos_pasadas(
+        "SELECT p.id,p.nombre,c.name AS cname FROM projects p
+         LEFT JOIN clients c ON c.id=p.client_id
+         WHERE p.nombre LIKE ? ORDER BY p.activo DESC, p.nombre LIMIT $lim", [$pre],
+        "SELECT p.id,p.nombre,c.name AS cname FROM projects p
+         LEFT JOIN clients c ON c.id=p.client_id
+         WHERE p.nombre LIKE ? ORDER BY p.activo DESC, p.nombre LIMIT $lim", [$like],
+        $lim, 'id');
     foreach ($r as $x) $g['Proyectos'][] = [
         't'=>$x['nombre'], 's'=>$x['cname'] ?: 'Interno',
         'u'=>'proyectos.php#p'.(int)$x['id'], 'i'=>'layers'];

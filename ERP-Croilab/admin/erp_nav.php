@@ -219,6 +219,14 @@ if (!function_exists('mes_label')) {
 function notif_ensure(){ static $done=false; if($done)return; $done=true;
   try{ db()->exec("CREATE TABLE IF NOT EXISTS notifications (id INT AUTO_INCREMENT PRIMARY KEY, admin_id INT NOT NULL, tipo VARCHAR(20) DEFAULT 'info', titulo VARCHAR(200), cuerpo VARCHAR(400), url VARCHAR(200) DEFAULT '', ref VARCHAR(140) DEFAULT NULL, tarea VARCHAR(200) DEFAULT '', actor VARCHAR(120) DEFAULT '', leido TINYINT DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq (admin_id, ref)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }catch(Exception $e){}
   foreach(['tarea'=>"VARCHAR(200) DEFAULT ''",'actor'=>"VARCHAR(120) DEFAULT ''",'snooze_until'=>"DATETIME DEFAULT NULL",'borrado'=>"TINYINT NOT NULL DEFAULT 0",'bandeja'=>"VARCHAR(12) NOT NULL DEFAULT 'principal'"] as $col=>$def){ try{ if(!db()->query("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='notifications' AND column_name='$col'")->fetchColumn()) db()->exec("ALTER TABLE notifications ADD COLUMN $col $def"); }catch(Exception $e){} }
+  /* Esta tabla no la crea ensure_schema() sino el fichero que la usa, así que
+     cuando la migración de índices pasó aún no existía y sus índices se
+     quedaron sin crear. Con esto se recuperan, y solo si faltan: una consulta
+     de comprobación y, en el caso normal, ninguna más.
+     Lo que sí era un problema abierto: la bandeja se pedía entera y ordenada por
+     fecha (notifications.php), y sin índice sobre (admin_id, created_at) eso
+     era un ORDER BY en memoria de todos los avisos del usuario, en cada visita. */
+  if (function_exists('croilab_indices_tabla_asegurar')) croilab_indices_tabla_asegurar(db(), 'notifications');
 }
 /* Categoría de una notificación a efectos de silenciar. Las asignaciones/menciones de
    tareas NO son silenciables (te perderías trabajo asignado); solo el chat y los avisos. */

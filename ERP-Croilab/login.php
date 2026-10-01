@@ -29,11 +29,27 @@ $M  = marca_partner((int)($_GET['m'] ?? 0));
 $MQ = !empty($_GET['m']) ? '?m=' . (int)$_GET['m'] : '';
 $MARK = $M['logo'] !== '' ? '<img src="' . e($M['logo']) . '" alt="' . e($M['name']) . '">' : e($M['initial']);
 
-/* Lista de clientes para el modo equipo. */
+/* Modo equipo: elegir cliente para ver su portal.
+   Antes: `SELECT id, name FROM clients ORDER BY name`, es decir, TODOS los clientes
+   descargados al HTML en un <select>. Con la base de una agencia grande ese
+   documento tenía cientos de <option> y no había forma de filtrar salvo con la
+   tecla del navegador. Ahora el buscador se trae solo lo que encaja con lo que se
+   teclea, siempre acotado, y respetando el alcance del admin.
+   La lógica vive en admin/lib/clientes_buscador.php porque admin/workspace.php
+   tenía exactamente el mismo <select> descargando la tabla entera. */
+require_once __DIR__ . '/admin/lib/clientes_buscador.php';
 $clientesAdmin = [];
-if ($isAdmin) {
-    try { $clientesAdmin = db()->query('SELECT id, name FROM clients ORDER BY name')->fetchAll(); } catch (Exception $e) {}
+/* Endpoint del buscador. Va antes de pintar nada para no repetir la consulta. */
+if ($isAdmin && ($_GET['buscar'] ?? '') !== '' && ($_GET['json'] ?? '') === '1') {
+    clientes_buscar_json($_GET['buscar'], 'login.php');
 }
+if ($isAdmin) $clientesAdmin = clientes_buscar($_GET['buscar'] ?? '');
+
+/* ¿Hay algún cliente al que este admin pueda entrar? Solo decide si se muestra el
+   buscador o el aviso de «no hay clientes». No hace falta un COUNT: preguntar por
+   uno con el mismo buscador que luego se usa evita el desajuste de contar todos los
+   clientes de la agencia cuando a este admin solo le tocan tres. */
+$hayClientes = $isAdmin ? (count(clientes_buscar('', 1)) > 0) : false;
 
 $error = '';
 /* Aviso de "has cerrado sesión": si no, el cierre de sesión y una recarga
@@ -220,16 +236,18 @@ if(document.startViewTransition&&!matchMedia('(prefers-reduced-motion:reduce)').
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
         <span>Entras en modo vista previa (solo lectura). Verás su portal tal cual lo ve el cliente.</span>
       </div>
-      <?php if ($clientesAdmin): ?>
+      <?php if ($hayClientes): ?>
       <div class="field">
-        <label for="cliSel">Cliente</label>
+        <label for="cliQ">Cliente</label>
         <div class="ibox">
           <svg class="lead" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          <select id="cliSel">
-            <?php foreach ($clientesAdmin as $c): ?><option value="<?= (int)$c['id'] ?>"><?= e($c['name']) ?></option><?php endforeach; ?>
-          </select>
+          <input id="cliQ" type="text" autocomplete="off" placeholder="Escribe para buscar…" oninput="clientesBuscar(this.value)">
+        </div>
+        <div class="ibox" style="margin-top:10px">
+          <select id="cliSel" onchange="clientesReflejar()"><?= clientes_opciones($clientesAdmin, 0) ?></select>
           <svg class="caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
         </div>
+        <div class="hint" id="cliHint" style="font-size:12px;color:#5c616b;margin-top:6px"></div>
       </div>
       <button class="go" type="button" onclick="verCliente()">Ver su portal <svg viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
       <?php else: ?>
@@ -242,6 +260,7 @@ if(document.startViewTransition&&!matchMedia('(prefers-reduced-motion:reduce)').
     <script>
       function verCliente(){ var s=document.getElementById('cliSel'); if(s&&s.value){ location.href='index.php?cli='+encodeURIComponent(s.value); } }
     </script>
+    <?= clientes_js('login.php') ?>
   <?php else: ?>
     <!-- Modo CLIENTE: login normal -->
     <form class="card" method="post" action="login.php<?= $MQ ?>">

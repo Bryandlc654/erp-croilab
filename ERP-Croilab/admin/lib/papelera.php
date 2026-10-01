@@ -75,33 +75,50 @@ function pap_borrar($tabla, $id, $tipo, $titulo = '', $hijos = []) {
     } catch (Exception $e) { $fila = null; }
     if (!$fila) return 0;
 
-    /* Foto de las filas hijas, para que restaurar devuelva la cosa entera y no
-       una cáscara vacía (una factura sin sus líneas no sirve de nada). */
-    $snapHijos = [];
-    foreach ($hijos as $h) {
-        $ht = $h['tabla'] ?? ''; $fk = $h['fk'] ?? '';
-        if (!preg_match('/^[a-z_]+$/i', (string)$ht) || !preg_match('/^[a-z_]+$/i', (string)$fk)) continue;
-        try {
-            $q = db()->prepare("SELECT * FROM `$ht` WHERE `$fk`=?"); $q->execute([$id]);
-            $snapHijos[] = ['tabla'=>$ht, 'fk'=>$fk, 'filas'=>$q->fetchAll(PDO::FETCH_ASSOC)];
-        } catch (Exception $e) {}
-    }
-
-    /* Primero las hijas, luego la madre: al revés puede chocar con las claves. */
-    foreach ($snapHijos as $h) {
-        try { db()->prepare("DELETE FROM `{$h['tabla']}` WHERE `{$h['fk']}`=?")->execute([$id]); } catch (Exception $e) {}
-    }
-    try { db()->prepare("DELETE FROM `$tabla` WHERE id=?")->execute([$id]); }
-    catch (Exception $e) { return 0; }
-
-    $me = function_exists('current_admin') ? current_admin() : null;
-    $datos = json_encode(['fila'=>$fila, 'hijos'=>$snapHijos], JSON_UNESCAPED_UNICODE);
+    /* A partir de aquí todo es «o pasa entero, o no pasa nada».
+       Antes cada paso iba por su cuenta con un catch vacío al lado, y el
+       resultado era el peor posible para una papelera: si el INSERT en `trash`
+       fallaba (disco lleno, conexión cortada, tabla sin espacio) el DELETE de
+       las filas ya estaba hecho y confirmado, así que la factura o la tarea
+       desaparecían del ERP sin dejar rastro en `trash`. El usuario veía «se ha
+       eliminado» y no había nada que deshacer. Con la transacción, ese fallo
+       devuelve la factura entera, con sus líneas y su apunte contable. */
+    $pdo = db();
+    db_tx_begin($pdo);
     try {
-        db()->prepare('INSERT INTO trash (tabla,ref_id,tipo,titulo,datos,admin_id,autor) VALUES (?,?,?,?,?,?,?)')
+        /* Foto de las filas hijas, para que restaurar devuelva la cosa entera y no
+           una cáscara vacía (una factura sin sus líneas no sirve de nada). */
+        $snapHijos = [];
+        foreach ($hijos as $h) {
+            $ht = $h['tabla'] ?? ''; $fk = $h['fk'] ?? '';
+            if (!preg_match('/^[a-z_]+$/i', (string)$ht) || !preg_match('/^[a-z_]+$/i', (string)$fk)) continue;
+            /* Una tabla que no existe en esta instalación no es un fallo: no hay
+               hijas que fotografiar ni que borrar. Una que sí existe y falla, sí:
+               ese error sube y manda deshacer todo. */
+            if (!db_tabla_existe($ht, $pdo)) continue;
+            $q = $pdo->prepare("SELECT * FROM `$ht` WHERE `$fk`=?"); $q->execute([$id]);
+            $snapHijos[] = ['tabla'=>$ht, 'fk'=>$fk, 'filas'=>$q->fetchAll(PDO::FETCH_ASSOC)];
+        }
+
+        /* Primero las hijas, luego la madre: al revés puede chocar con las claves. */
+        foreach ($snapHijos as $h) {
+            $pdo->prepare("DELETE FROM `{$h['tabla']}` WHERE `{$h['fk']}`=?")->execute([$id]);
+        }
+        $pdo->prepare("DELETE FROM `$tabla` WHERE id=?")->execute([$id]);
+
+        $me = function_exists('current_admin') ? current_admin() : null;
+        $datos = json_encode(['fila'=>$fila, 'hijos'=>$snapHijos], JSON_UNESCAPED_UNICODE);
+        $pdo->prepare('INSERT INTO trash (tabla,ref_id,tipo,titulo,datos,admin_id,autor) VALUES (?,?,?,?,?,?,?)')
             ->execute([$tabla, $id, (string)$tipo, mb_substr(trim((string)$titulo), 0, 200), $datos,
                        (int)($me['id'] ?? 0) ?: null, (string)($me['username'] ?? '')]);
-        $tid = (int)db()->lastInsertId();
-    } catch (Exception $e) { return 0; }
+        $tid = (int)$pdo->lastInsertId();
+    } catch (Exception $e) {
+        /* Sin tragarse nada: esto es lo que antes se confirmaba a medias. */
+        db_tx_rollback($pdo);
+        error_log('pap_borrar ' . $tabla . '#' . $id . ': ' . $e->getMessage());
+        return 0;
+    }
+    db_tx_commit($pdo);
 
     pap_purga();
     return $tid;
@@ -118,11 +135,28 @@ function pap_borrar_hijos_tareas($taskIds) {
     $ids = array_values(array_filter(array_map('intval', (array)$taskIds)));
     if (!$ids) return;
     $in = implode(',', $ids);
-    try { db()->exec("DELETE r FROM task_comment_reactions r JOIN task_comments c ON c.id=r.comment_id WHERE c.task_id IN ($in)"); }
-    catch (Exception $e) { error_log('pap_borrar_hijos_tareas reactions: '.$e->getMessage()); }
+    $pdo = db();
+
+    /* Cada tabla se comprueba antes de tocarla: una que no exista en esta
+       instalación no es un fallo. Y si el fallo es de verdad, el error SUBE
+       cuando hay una transacción que lo pueda deshacer (delete.php borra
+       después al cliente entero, y confirmar sin comentarios ni adjuntos
+       dejaría tareas con hijos huérfanos para siempre). Sin transacción de
+       alrededor —workspace.php borra una lista suelta— se registra y se sigue,
+       que era lo de antes. */
+    $fallar = function ($msg) use ($pdo) {
+        error_log($msg);
+        if (db_tx_dentro()) throw new Exception($msg);
+    };
+
+    if (db_tabla_existe('task_comment_reactions', $pdo)) {
+        try { $pdo->exec("DELETE r FROM task_comment_reactions r JOIN task_comments c ON c.id=r.comment_id WHERE c.task_id IN ($in)"); }
+        catch (Exception $e) { $fallar('pap_borrar_hijos_tareas reactions: '.$e->getMessage()); }
+    }
     foreach (['task_comments','task_checklist','task_attachments'] as $t) {
-        try { db()->exec("DELETE FROM `$t` WHERE task_id IN ($in)"); }
-        catch (Exception $e) { error_log("pap_borrar_hijos_tareas $t: ".$e->getMessage()); }
+        if (!db_tabla_existe($t, $pdo)) continue;
+        try { $pdo->exec("DELETE FROM `$t` WHERE task_id IN ($in)"); }
+        catch (Exception $e) { $fallar("pap_borrar_hijos_tareas $t: ".$e->getMessage()); }
     }
 }
 
@@ -165,11 +199,34 @@ function pap_restaurar($tid) {
     } catch (Exception $e) { return ['ok'=>false, 'msg'=>'Esa tabla ya no existe.']; }
 
     if (!pap_insert($tabla, $d['fila'])) return ['ok'=>false, 'msg'=>'No se ha podido devolver el registro.'];
-    foreach (($d['hijos'] ?? []) as $h) {
-        foreach (($h['filas'] ?? []) as $f) pap_insert((string)$h['tabla'], $f);
-    }
 
-    try { db()->prepare('DELETE FROM trash WHERE id=?')->execute([$tid]); } catch (Exception $e) {}
+    /* La vuelta también es «todo o nada». Antes se inserta la madre, luego las
+       hijas una a una sin mirar el resultado, y al final se borra la foto. Con
+       una hija que fallara, el elemento volvía a medias (por ejemplo, una factura
+       sin sus líneas) y la foto desaparecía igualmente: ya no había forma de
+       deshacer el deshacer. */
+    $pdo = db();
+    db_tx_begin($pdo);
+    try {
+        foreach (($d['hijos'] ?? []) as $h) {
+            if (!preg_match('/^[a-z_]+$/i', (string)($h['tabla'] ?? ''))) continue;
+            /* Tabla que ya no existe en la instalación: sus hijas no tienen a
+               dónde volver, y eso no es motivo para tumbar la restauración del
+               elemento principal. */
+            if (!db_tabla_existe((string)$h['tabla'], $pdo)) continue;
+            foreach (($h['filas'] ?? []) as $f) {
+                if (!pap_insert((string)$h['tabla'], $f)) {
+                    throw new Exception('No se ha podido devolver una fila de ' . $h['tabla']);
+                }
+            }
+        }
+        $pdo->prepare('DELETE FROM trash WHERE id=?')->execute([$tid]);
+    } catch (Exception $e) {
+        db_tx_rollback($pdo);
+        error_log('pap_restaurar trash#' . $tid . ': ' . $e->getMessage());
+        return ['ok'=>false, 'msg'=>'No se ha podido devolver el registro entero. No se ha tocado nada.'];
+    }
+    db_tx_commit($pdo);
 
     /* Republica el portal del cliente afectado: antes, restaurar una tarea o una
        lista no volvía a publicar y el cliente seguía viendo la versión vieja (P2-10). */

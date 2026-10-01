@@ -31,12 +31,257 @@ function db() {
 }
 
 /* ===========================================================
+   EL SELLO DEL ESQUEMA
+
+   `ensure_schema()` se llama en la línea ~5 de casi todas las pantallas. Antes
+   comprobaba el esquema con 27 consultas a `information_schema` en cada
+   petición: aunque no faltara nada, cada clic de menú pagaba 27
+   viajes de ida y vuelta a MySQL antes de que la página empezara a trabajar.
+
+   Ahora se guarda en `settings.schema_version` qué versión del esquema sabe
+   dejar este código al día. Si esa versión coincide con CROILAB_SCHEMA_VERSION,
+   `ensure_schema()` sale tras UNA consulta —una clave primaria, la más barata
+   que hay— y ni vuelve a mirar `information_schema`.
+
+   PARA SUBIR LA VERSIÓN: cambia CROILAB_SCHEMA_VERSION por un número mayor, y
+   solo cuando el bloque de migración de más abajo ya sepa arreglar lo que
+   falta. El número es el aviso, no el trabajo: el trabajo sigue siendo el
+   bloque de abajo, que es idempotente y se puede repetir sin miedo.
+
+   LO QUE ESTO CAMBIA A PROPÓSITO: restaurar una copia antigua de la base ya
+   no se repara sola, porque el sello dirá que lo está. Se fuerza con
+   `ensure_schema(true)`, que hace la comprobación entera ignorando el sello.
+   =========================================================== */
+const CROILAB_SCHEMA_VERSION = 2;
+
+/* Una sola consulta de clave primaria. Devuelve true si el esquema está al día.
+   Si la tabla `settings` no existe todavía (instalación nueva) MySQL avisa con
+   excepción, y aquí no hay nada que comprobar: es trabajo del bloque de abajo. */
+function croilab_esquema_al_dia($pdo) {
+    try {
+        $st = $pdo->prepare('SELECT valor FROM settings WHERE clave = ?');
+        $st->execute(['schema_version']);
+        return ((int)$st->fetchColumn()) === CROILAB_SCHEMA_VERSION;
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+/* Sella el esquema como actualizado. Se llama SOLO cuando la migración de abajo
+   ha terminado bien: si una sentencia peta a mitad, el sello no se escribe y la
+   siguiente petición vuelve a intentarlo, igual que antes de este cambio. */
+function croilab_sellar_esquema($pdo) {
+    try {
+        $pdo->prepare('INSERT INTO settings (clave, valor) VALUES (?, ?) ON DUPLICATE KEY UPDATE valor = VALUES(valor)')
+            ->execute(['schema_version', (string)CROILAB_SCHEMA_VERSION]);
+    } catch (Exception $e) { }
+}
+
+/* ===========================================================
+   ÍNDICES QUE FALTABAN
+
+   La mitad de las tablas del ERP se nacen en el fichero de la página que las usa
+   y, casi siempre, solo con PRIMARY KEY. Eso no estorba en desarrollo, pero en
+   cuanto una tabla crece, cada listado la recorre entera: así `notifications`
+   ordenaba toda la bandeja de un usuario en cada carga, o `invoices` no tenía
+   nada sobre `client_id` ni `fecha`.
+
+   Aquí se crea lo que falta, una vez, al subir el sello a la versión 2.
+
+   TRES SALVEDADES IMPORTANTES:
+
+   1. No se inventan índices «por si acaso»: solo los que tienen una consulta
+      detrás. `login_attempts`, por ejemplo, ya está bien cubierta por su
+      PRIMARY KEY (ident, ip), que es exactamente lo que consulta el login.
+   2. Antes de tocar nada se comprueba que la tabla existe, que TODAS las
+      columnas del índice existen y que el índice no existe ya. Sin esas tres
+      comprobaciones, un ALTER sobre una columna que esa instalación no tiene
+      revienta la migración entera.
+   3. Un fallo puntual no debe dejar el esquema a medias ni tumbar la web: cada
+      índice va en su propio try/catch y se registra en el log. La web sigue
+      funcionando igual de rápido que antes, solo que sin ese índice.
+   =========================================================== */
+/* La lista de índices que este código garantiza. Es la fuente única: la usan
+   tanto la comprobación del sello como la migración, para que no puedan
+   divergir (si divergieran, el sello se escribiría sin un índice y nadie lo
+   volvería a intentar).
+   Formato: tabla, nombre del índice, columnas, y si es único.
+   Solo se incluyen los que tienen una consulta detrás; los que ya cubren una
+   PRIMARY KEY (login_attempts, chat_members, contact_tags…) no aparecen. */
+const CROILAB_INDICES = [
+    /* `notifications` tenía UNIQUE (admin_id, ref): el filtro por admin_id ya
+       funcionaba, pero faltaba created_at, y «SELECT * FROM notifications WHERE
+       admin_id=? ORDER BY created_at DESC» (notifications.php) ordenaba en
+       memoria toda la bandeja del usuario en cada visita. El segundo índice es
+       el del contador y la lista de sin leer, que filtran por leido. */
+    ['notifications', 'ix_notif_admin_fecha', ['admin_id', 'created_at'], false],
+    ['notifications', 'ix_notif_admin_leido',  ['admin_id', 'leido'], false],
+
+    /* `invoices` no tenía nada salvo la clave primaria: cada factura de un
+       cliente, cada listado por fecha y cada filtro por estado (facturas.php,
+       contabilidad.php, buscar.php) recorrían la tabla entera. `numero` ya lo
+       cubre el único condicional de lib/fin_prog.php, con la aplicación
+       comprobando antes que no haya repetidos. */
+    ['invoices', 'ix_inv_client_fecha', ['client_id', 'fecha'], false],
+    ['invoices', 'ix_inv_fecha',        ['fecha'], false],
+    ['invoices', 'ix_inv_estado_fecha',  ['estado', 'fecha'], false],
+
+    /* `accounting` se recorta por fecha y por cliente, y se cruza contra invoices. */
+    ['accounting', 'ix_acc_fecha',  ['fecha'], false],
+    ['accounting', 'ix_acc_client', ['client_id'], false],
+
+    /* Listados por cliente: proyectos, tickets, agendas y vencimientos. */
+    ['projects', 'ix_proj_client', ['client_id'], false],
+    ['support_tickets', 'ix_ticket_client_estado', ['client_id', 'estado'], false],
+    ['portal_meeting_requests', 'ix_pmr_estado_fecha', ['estado', 'created_at'], false],
+    ['invoice_schedules', 'ix_isch_client_activo', ['client_id', 'activo'], false],
+
+    /* Presencia en el chat y perfil: se piden siempre por admin_id y solo
+       tenían la clave primaria por id. */
+    ['chat_presence', 'ix_pres_admin', ['admin_id'], false],
+    ['admin_profiles', 'ix_perfil_admin', ['admin_id'], false],
+
+/* Búsqueda por prefijo en admin/buscar.php. Ojo con lo que esto NO arregla:
+       un LIKE '%x%' no lo puede usar ningún índice, porque el comodín inicial
+       deja el orden de las claves indeterminado. Lo que sí se resuelve es la
+       búsqueda por «x%», que es la primera pasada de la general y la única del
+       buscador de clientes: lo que se está tecleando, se teclea por delante. */
+    ['clients', 'ix_cli_name',     ['name'], false],
+    ['clients', 'ix_cli_username', ['username'], false],
+    ['admins',  'ix_adm_username', ['username'], false],
+    ['admins',  'ix_adm_email',    ['email'], false],
+    ['tasks',   'ix_task_titulo',  ['titulo'], false],
+    ['contacts', 'ix_cont_nombre', ['nombre'], false],
+    ['contacts', 'ix_cont_empresa',['empresa'], false],
+    ['deals',   'ix_deal_nombre',  ['nombre'], false],
+    ['support_tickets', 'ix_ticket_asunto', ['asunto'], false],
+    ['projects', 'ix_proj_nombre', ['nombre'], false],
+    ['invoices', 'ix_inv_cliente_nombre', ['cliente_nombre'], false],
+
+    /* Tareas: casi siempre se filtran por estado y se ordenan por fecha. */
+    ['tasks', 'ix_task_estado_fini', ['estado', 'fecha_inicio'], false],
+
+    /* CRM: listados por propietario. */
+    ['contacts', 'ix_cont_propietario', ['propietario_id'], false],
+];
+
+function croilab_indice_asegurar($pdo, $tabla, $indice, array $columnas, $unico = false) {
+    static $cacheTabla = [];
+    try {
+        $cacheTabla[$tabla] ??= ((int)$pdo->query(
+            "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=" . $pdo->quote($tabla)
+        )->fetchColumn()) > 0;
+        if (!$cacheTabla[$tabla]) return false;   /* la tabla no existe en esta instalación: no hay nada que indexar */
+
+        /* ¿Existe ya el índice con ese nombre? Por nombre, no por columnas: si el
+           nombre está ocupado, el ALTER rebotaría con «duplicate key name». */
+        $existe = (int)$pdo->query(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=" .
+            $pdo->quote($tabla) . " AND INDEX_NAME=" . $pdo->quote($indice)
+        )->fetchColumn();
+        if ($existe > 0) return false;
+
+        /* Todas las columnas tienen que existir. information_schema se consulta
+           una vez por columna y solo dentro de este bloque, que corre una vez
+           por instalación: es la opción lenta, y aquí slow es lo que se quiere. */
+        foreach ($columnas as $col) {
+            $hay = (int)$pdo->query(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=" .
+                $pdo->quote($tabla) . " AND COLUMN_NAME=" . $pdo->quote($col)
+            )->fetchColumn();
+            if (!$hay) return false;
+        }
+
+        $pdo->exec("ALTER TABLE `$tabla` ADD " . ($unico ? 'UNIQUE KEY' : 'INDEX') . " `$indice` (`" . implode('`,`', $columnas) . "`)");
+        error_log('croilab: indice creado ' . $tabla . '.' . $indice);
+        return true;
+    } catch (Exception $e) {
+        error_log('croilab: indice ' . $tabla . '.' . $indice . ' -> ' . $e->getMessage());
+        return false;
+    }
+}
+
+function croilab_migrar_indices($pdo) {
+    foreach (CROILAB_INDICES as $d) {
+        croilab_indice_asegurar($pdo, $d[0], $d[1], $d[2], $d[3]);
+    }
+}
+
+/* Asegura los índices de UNA sola tabla, y solo si falta alguno.
+ *
+ * Hace falta para las tablas que crea el fichero de su página y no ensure_schema()
+ * (notifications en erp_nav.php, el chat en chat.php…): cuando la migración se
+ * ejecutó, esas tablas aún no existían, así que sus índices se quedaron sin
+ * crear y no hay forma de recuperarlos salvo al subir otra vez el sello.
+ *
+ * OJO con lo que NO es la solución: llamar aquí a ensure_schema(true). El
+ * parámetro true salta el sello a propósito, así que eso reventaría la
+ * migración entera —28 consultas a information_schema— en cada petición que
+ * pase por aquí. Una consulta y, solo si algo falta, los ALTER. */
+function croilab_indices_tabla_asegurar($pdo, $tabla) {
+    try {
+        $nombres = [];
+        foreach (CROILAB_INDICES as $d) { if ($d[0] === $tabla) $nombres[] = $d[1]; }
+        if (!$nombres) return;
+        $in = implode(',', array_map([$pdo, 'quote'], $nombres));
+        $hay = (int)$pdo->query(
+            "SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.STATISTICS
+             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=" . $pdo->quote($tabla) . " AND INDEX_NAME IN ($in)"
+        )->fetchColumn();
+        if ($hay >= count($nombres)) return;   /* ya están: no se toca nada */
+        foreach (CROILAB_INDICES as $d) {
+            if ($d[0] === $tabla) croilab_indice_asegurar($pdo, $d[0], $d[1], $d[2], $d[3]);
+        }
+    } catch (Exception $e) { }
+}
+
+/* ¿Falta algún índice de los que este código sabe crear?
+   Dos consultas, y solo se ejecuta en el camino lento (cuando el sello no cuadra):
+   en el camino rápido el sello ya respondió y esto ni se mira. */
+function croilab_indices_al_dia($pdo) {
+    try {
+        $tablas = [];
+        foreach (CROILAB_INDICES as $d) $tablas[$d[0]] = true;
+        $in = implode(',', array_map([$pdo, 'quote'], array_keys($tablas)));
+
+        $presentes = [];
+        foreach ($pdo->query("SELECT TABLE_NAME, INDEX_NAME FROM information_schema.STATISTICS
+                              WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ($in)")->fetchAll() as $r) {
+            $presentes[$r['TABLE_NAME'] . '|' . $r['INDEX_NAME']] = true;
+        }
+        /* Las tablas que aún no existen no cuentan como pendientes: se crean
+           desde el fichero de su página (notifications en erp_nav.php, chat en
+           chat.php…) y no pueden tener índices antes de existir. Su índice se
+           añadirá en la próxima pasada, que para entonces ya las verá. */
+        $tablasOk = [];
+        foreach ($pdo->query("SELECT TABLE_NAME FROM information_schema.TABLES
+                              WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ($in)")->fetchAll() as $r) {
+            $tablasOk[$r['TABLE_NAME']] = true;
+        }
+
+        foreach (CROILAB_INDICES as $d) {
+            if (!isset($tablasOk[$d[0]])) continue;
+            if (!isset($presentes[$d[0] . '|' . $d[1]])) return false;
+        }
+        return true;
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+/* ===========================================================
    Auto-reparación del esquema: crea lo nuevo (role, client_types,
    tipo_id) si falta. Así el panel funciona aunque no se haya
-   ejecutado migrate.php. Es rápido e idempotente.
+   ejecutado migrate.php. Es idempotente, y solo entra en la
+   comprobación completa cuando el sello no cuadra.
    =========================================================== */
-function ensure_schema() {
+function ensure_schema($forzar = false) {
+    /* Una sola pasada por petición aunque la llamen varias pantallas
+       (pasa en _layout.php y en los ajustes). */
+    static $hecho = false;
+    if ($hecho && !$forzar) return;
     $pdo = db();
+    if (!$forzar && croilab_esquema_al_dia($pdo)) { $hecho = true; return; }
     try {
         $q = function($sql) use ($pdo){ return (int)$pdo->query($sql)->fetchColumn(); };
         $hasTable = $q("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='client_types'");
@@ -66,7 +311,14 @@ function ensure_schema() {
         $hasActivo = $q("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='clients' AND COLUMN_NAME='activo'");
         $hasFactTel = $q("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='clients' AND COLUMN_NAME='fact_tel'");
         $hasLoginEmail = $q("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='clients' AND COLUMN_NAME='login_email'");
-        if ($hasTable && $hasRole && $hasEmail && $hasTipo && $hasInf && $hasSvc && $hasSet && $hasLook && $hasTok && $hasTasks && $hasEsCli && $hasComments && $hasCreds && $hasCrm && $hasCrmTypes && $hasChk && $hasAtt && $hasReact && $hasCliOrden && $hasCmChk && $hasListTipo && $hasFini && $hasEtq && $hasFact && $hasActivo && $hasFactTel && $hasLoginEmail) return;   // ya está todo
+        /* OJO: aquí NO se mira si los índices están, a propósito.
+           Si el sello quedara atado a ellos, bastaría UNA columna que no se
+           pueda indexar (un TEXT, un nombre demasiado largo, un tipo raro de
+           esa instalación) para que el sello nunca se escribiera y las 27
+           consultas a information_schema volvieran a caer en cada petición: el
+           arreglo del punto 1 deshaciéndose solo. Que un índice no se pueda
+           crear es un aviso en el log, no un motivo para no sellar. */
+        if ($hasTable && $hasRole && $hasEmail && $hasTipo && $hasInf && $hasSvc && $hasSet && $hasLook && $hasTok && $hasTasks && $hasEsCli && $hasComments && $hasCreds && $hasCrm && $hasCrmTypes && $hasChk && $hasAtt && $hasReact && $hasCliOrden && $hasCmChk && $hasListTipo && $hasFini && $hasEtq && $hasFact && $hasActivo && $hasFactTel && $hasLoginEmail) { croilab_sellar_esquema($pdo); $hecho = true; return; }   // ya está todo
 
         if ($hasTasks && !$hasEsCli) {
             $pdo->exec("ALTER TABLE task_lists ADD COLUMN es_cliente TINYINT NOT NULL DEFAULT 0");
@@ -272,6 +524,18 @@ function ensure_schema() {
             $pdo->prepare("UPDATE clients SET tipo_id=? WHERE tipo_id IS NULL AND conversiones=1")->execute([$idSEO]);
             $pdo->prepare("UPDATE clients SET tipo_id=? WHERE tipo_id IS NULL AND conversiones=0")->execute([$idWeb]);
         }
+        /* Índices que faltaban. Va después de crear las columnas nuevas, porque un
+           índice sobre una columna que este mismo bloque acaba de añadir sí se
+           puede crear, y al revés no.
+           La comprobación previa es solo para no recorrer los 26 índices
+           cuando ya están todos: si falta alguno, se intenta la migración
+           entera. Y aunque algún ALTER no llegue a salir, el sello se escribe
+           igual (más abajo). */
+        if (!croilab_indices_al_dia($pdo)) croilab_migrar_indices($pdo);
+
+        /* Solo se sella si se ha llegado aquí entero. */
+        croilab_sellar_esquema($pdo);
+        $hecho = true;
     } catch (Exception $e) {
         /* si algo falla, no bloquear la app */
     }
@@ -285,4 +549,130 @@ function get_setting($k, $def = '') {
         $v = $st->fetchColumn();
         return $v === false ? $def : $v;
     } catch (Exception $e) { return $def; }
+}
+
+/* ===========================================================
+   TRANSACCIONES QUE SE PUEDEN ANIDAR
+
+   Por qué esto existe: PDO no admite transacciones anidadas. Si un código ya
+   está dentro de una transacción y llama a beginTransaction(), revienta con
+   «There is already an active transaction». Y en este ERP hace falta anidar:
+   por ejemplo admin/delete.php abre su transacción para borrar un cliente y,
+   en medio, llama a pap_borrar(), que borra las filas hijas del cliente. Si la
+   papelera abriera su propia transacción, el borrado entero reventaría.
+
+   Por eso el nivel 0 usa BEGIN/COMMIT/ROLLBACK de verdad, y los niveles
+   siguientes usan SAVEPOINT: MySQL permite anidar así, y un fallo en la parte
+   interior deshace solo lo interior, sin tirar lo que hizo la exterior.
+
+   LO QUE ESTAS FUNCIONES NO PUEDEN ARREGLAR, y es importante saberlo: en MySQL
+   una sentencia que falla NO aborta la transacción (al revés que en PostgreSQL).
+   Por eso un «catch (Exception $e) {}» metido entre un BEGIN y su COMMIT deja
+   pasar el fallo y confirma el resto: la transacción parece correcta y el
+   resultado es un estado a medias. Por eso el patrón que se usa en el ERP es
+   dejar que la excepción suba hasta el catch exterior, y que ese sea el que
+   haga el rollback. */
+function &db_tx_profundidad() {
+    static $n = 0;
+    return $n;
+}
+
+/* Abre un nivel de transacción. Devuelve false si ya había una rota. */
+function db_tx_begin($pdo) {
+    $n = &db_tx_profundidad();
+    if ($n === 0) {
+        /* Hay una transacción abierta que no es nuestra: alguien llamó a
+           beginTransaction() a pelo por una ruta que no usa estos helpers.
+           No se puede continuar sobre ella (el contador no la conoce y su
+           commit se llevaría por delante lo que hagamos aquí). Se deshace para
+           poder empezar limpio, pero se avisa: perder un commit sin que nadie
+           entienda por qué es peor que el fallo que lo provocando. */
+        if ($pdo->inTransaction()) {
+            error_log('db_tx_begin: había una transacción abierta sin db_tx_begin(); se deshace');
+            $pdo->rollBack();
+        }
+        $pdo->beginTransaction();
+        $n = 1;
+        return true;
+    }
+    $pdo->exec('SAVEPOINT croilab_sp' . $n);
+    $n++;
+    return true;
+}
+
+/* Cierra un nivel. En el 0 confirma de verdad; en los demás, suelta el savepoint. */
+function db_tx_commit($pdo) {
+    $n = &db_tx_profundidad();
+    if ($n === 0) return false;
+    $n--;
+    if ($n === 0) { $pdo->commit(); return true; }
+    $pdo->exec('RELEASE SAVEPOINT croilab_sp' . $n);
+    return true;
+}
+
+/* Deshace hasta este nivel. Si MySQL ya ha dejado la transacción entera rota
+   (un deadlock, o un lock wait timeout), no hay nada que deshacer y el nivel se
+   pone a 0 para no dejar el contador desfasado. */
+function db_tx_rollback($pdo) {
+    $n = &db_tx_profundidad();
+    if ($n === 0) return false;
+    if (!$pdo->inTransaction()) { $n = 0; return false; }
+    $n--;
+    if ($n === 0) { $pdo->rollBack(); return true; }
+    $pdo->exec('ROLLBACK TO SAVEPOINT croilab_sp' . $n);
+    return true;
+}
+
+/* ¿Existe esta tabla en esta instalación?
+   Este ERP crea media base de datos sobre la marcha, y cada tabla tiene su
+   página: una instalación puede no tener todavía `invoice_schedules` o
+   `task_checklist`. Al borrar o migrar hay que tolerar esa ausencia… pero no
+   cualquier fallo.
+   La diferencia es la que motivó esta función: con un catch vacío no se
+   distingue «no hay nada que limpiar» de «la limpieza ha fallado», y en una
+   transacción MySQL el segundo caso se confirma igualmente, dejando el borrado
+   a medias. Comprobando antes de actuar, lo que no se puede hacer se ni intenta,
+   y lo que falla de verdad sube y deshace. */
+function db_tabla_existe($tabla, $pdo = null) {
+    static $cache = [];
+    $tabla = (string)$tabla;
+    if (isset($cache[$tabla])) return $cache[$tabla];
+    if (!preg_match('/^[a-z_]+$/i', $tabla)) return false;
+    try {
+        $pdo = $pdo ?: db();
+        $n = (int)$pdo->query(
+            'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=' . $pdo->quote($tabla)
+        )->fetchColumn();
+        $cache[$tabla] = $n > 0;
+    } catch (Exception $e) {
+        $cache[$tabla] = false;
+    }
+    return $cache[$tabla];
+}
+
+/* ¿Existe esta columna? Mismo motivo que db_tabla_existe(), para cuando lo que
+   falta en una instalación antigua es la columna y no la tabla entera. */
+function db_columna_existe($tabla, $columna, $pdo = null) {
+    static $cache = [];
+    $clave = $tabla . '.' . $columna;
+    if (isset($cache[$clave])) return $cache[$clave];
+    if (!preg_match('/^[a-z_]+$/i', (string)$tabla) || !preg_match('/^[a-z_]+$/i', (string)$columna)) return false;
+    try {
+        $pdo = $pdo ?: db();
+        $n = (int)$pdo->query(
+            'SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=' .
+            $pdo->quote($tabla) . ' AND COLUMN_NAME=' . $pdo->quote($columna)
+        )->fetchColumn();
+        $cache[$clave] = $n > 0;
+    } catch (Exception $e) {
+        $cache[$clave] = false;
+    }
+    return $cache[$clave];
+}
+
+/* ¿Hay una transacción abierta? Para saber si lo que viene se va a
+   confirmar solo o no. */
+function db_tx_dentro() {
+    $n = &db_tx_profundidad();
+    return $n > 0;
 }

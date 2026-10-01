@@ -146,7 +146,13 @@ function pu_lead_a_cliente($contactId, $dealId = 0) {
      un cliente sin listas o un contacto medio enlazado (P1-08). */
   $pdo = db();
   try {
-    $pdo->beginTransaction();
+    /* db_tx_* y no beginTransaction() a pelo: este puente puede acabar llamado
+       desde un flujo que ya tenga una transacción abierta (por ejemplo el
+       alta desde la web del cliente), y en ese caso beginTransaction()
+       reventaría con «There is already an active transaction». Los helpers
+       anidan con savepoints, así que en ambos casos se confirma o se
+       deshace lo que toca. */
+    db_tx_begin($pdo);
     $cols = implode(', ', array_keys($campos));
     $ph   = implode(', ', array_map(fn($k) => ":$k", array_keys($campos)));
     $pdo->prepare("INSERT INTO clients ($cols) VALUES ($ph)")->execute($campos);
@@ -164,9 +170,9 @@ function pu_lead_a_cliente($contactId, $dealId = 0) {
     $pdo->prepare('UPDATE contacts SET client_id=? WHERE id=?')->execute([$newId, $contactId]);
     $pdo->prepare('UPDATE deals SET client_id=? WHERE contact_id=?')->execute([$newId, $contactId]);
 
-    $pdo->commit();
+    db_tx_commit($pdo);
   } catch (Exception $e) {
-    if ($pdo->inTransaction()) $pdo->rollBack();
+    db_tx_rollback($pdo);
     error_log('pu_lead_a_cliente: '.$e->getMessage());
     return ['ok'=>false, 'msg'=>'No se ha podido crear el cliente: ' . $e->getMessage()];
   }

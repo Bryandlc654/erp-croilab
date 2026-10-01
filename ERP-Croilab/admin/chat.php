@@ -174,6 +174,38 @@ function chat_msg_payload($m,$ctx){
     'reply'=>$reply,'attach'=>$attach,'react'=>array_values($ctx['reactMap'][$mid]??[]),
     'edited'=>!empty($m['edited'])?1:0,'deleted'=>$deleted?1:0];
 }
+/* Cuántos mensajes se cargan de golpe. El chat se abría con TODA la historia de
+   la sala en memoria y en el HTML: a los pocos meses de uso eso son decenas de
+   miles de filas por carga, y el poll las volvía a pedir cada 2,5 s. Ahora entra
+   solo la última ventana, y el botón de arriba del hilo va trayendo el resto. */
+const CH_PAGINA = 50;
+/* Tope de ids que el navegador puede pedir en cada poll para el refresco de
+   reacciones / ediciones / borrados. Es lo que hay en pantalla, as�� que este
+   tope solo se nota si alguien deja 400 mensajes cargados a la vez. */
+const CH_MAX_IDS = 400;
+
+/* Convierte filas de chat_messages en los payloads que consume el JS.
+   Resuelve también lo que se cita: si un mensaje responde a otro que no viene en
+   este lote (porque está en una página anterior), lo busca para que la cita
+   salga con su texto. Lo usan la carga inicial, el poll y «cargar anteriores». */
+function chat_payloads($rows,$meId,$adminName,$namesLower){
+    $msgById=[]; foreach($rows as $r) $msgById[(int)$r['id']]=$r;
+    $need=[]; foreach($rows as $r){ if(!empty($r['reply_to']) && !isset($msgById[(int)$r['reply_to']])) $need[(int)$r['reply_to']]=1; }
+    if($need){ $in=implode(',',array_map('intval',array_keys($need)));
+        foreach(db()->query("SELECT * FROM chat_messages WHERE id IN ($in)") as $rr) $msgById[(int)$rr['id']]=$rr; }
+    $ids=array_map(fn($r)=>(int)$r['id'],$rows);
+    $ctx=['meId'=>$meId,'adminName'=>$adminName,'namesLower'=>$namesLower,'msgById'=>$msgById,'reactMap'=>chat_reactions_for($ids,$meId)];
+    return array_map(fn($r)=>chat_msg_payload($r,$ctx),$rows);
+}
+/* Los ids que llegan del navegador vienen en «1,2,3». Se castean a entero antes
+   de tocar SQL, que es lo único que hace seguro el IN que se monte después. */
+function chat_ids_post($campo='ids',$tope=CH_MAX_IDS){
+    $crudo=(string)($_POST[$campo]??'');
+    if($crudo==='') return [];
+    $ids=[];
+    foreach(explode(',',$crudo) as $v){ $n=(int)trim($v); if($n>0) $ids[]=$n; if(count($ids)>=$tope) break; }
+    return $ids;
+}
 
 /* --- Acciones (AJAX/POST) --- */
 /* Permisos del chat (decisión de la auditoría, defecto P1-04): el chat es
@@ -277,6 +309,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     }
     echo json_encode(['ok'=>0]); exit;
   }
+  /* Página anterior del hilo. Sin esto, abrir el chat cargaba la historia entera. */
+  if ($a==='older') {
+    $rid=(int)($_POST['room_id']??0); $before=(int)($_POST['before']??0);
+    if ($rid && chat_is_member($rid,$meId)) {
+      /* DESC + LIMIT + reverse: MySQL sí puede usar el índice por room_id e id
+         bajando desde el final, cosa que un «ORDER BY id LIMIT» sobre toda la sala
+         no hacía. */
+      $q=db()->prepare('SELECT * FROM chat_messages WHERE room_id=? AND id<? ORDER BY id DESC LIMIT '.CH_PAGINA);
+      $q->execute([$rid,$before>0?$before:PHP_INT_MAX]);
+      $rows=array_reverse($q->fetchAll());
+      echo json_encode(['ok'=>1,'messages'=>chat_payloads($rows,$meId,$adminName,$namesLower),'more'=>count($rows)===CH_PAGINA]); exit;
+    }
+    echo json_encode(['ok'=>0,'messages'=>[]]); exit;
+  }
   if ($a==='poll') {
     $rid=(int)($_POST['room_id']??0); $after=(int)($_POST['after']??0);
     if ($rid && chat_is_member($rid,$meId)) {
@@ -284,19 +330,23 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
       $q=db()->prepare('SELECT * FROM chat_messages WHERE room_id=? AND id>? ORDER BY id'); $q->execute([$rid,$after]); $rows=$q->fetchAll();
       if ($rows) { $last=(int)$rows[count($rows)-1]['id']; db()->prepare('UPDATE chat_members SET last_read=? WHERE room_id=? AND admin_id=?')->execute([$last,$rid,$meId]); }
       /* payloads de los mensajes nuevos (con adjuntos, reacciones, cita…) */
-      $msgById=[]; foreach($rows as $r) $msgById[(int)$r['id']]=$r;
-      $need=[]; foreach($rows as $r){ if(!empty($r['reply_to']) && !isset($msgById[(int)$r['reply_to']])) $need[(int)$r['reply_to']]=1; }
-      if($need){ $in=implode(',',array_map('intval',array_keys($need))); foreach(db()->query("SELECT * FROM chat_messages WHERE id IN ($in)") as $rr) $msgById[(int)$rr['id']]=$rr; }
-      $ids=array_map(fn($r)=>(int)$r['id'],$rows);
-      $ctx=['meId'=>$meId,'adminName'=>$adminName,'namesLower'=>$namesLower,'msgById'=>$msgById,'reactMap'=>chat_reactions_for($ids,$meId)];
-      $payloads=array_map(fn($r)=>chat_msg_payload($r,$ctx),$rows);
-      /* estados de mensajes ya visibles que pueden cambiar (reacción / editado / borrado) */
+      $payloads=chat_payloads($rows,$meId,$adminName,$namesLower);
+      /* Estados de mensajes ya visibles que pueden cambiar (reacción / editado / borrado).
+         Antes esto era `... WHERE (edited=1 OR deleted=1 OR id IN (SELECT message_id FROM
+         chat_reactions)) ORDER BY id DESC LIMIT 150`: un barrido de la sala cada 2,5 s que
+         además renderizaba 150 mensajes en HTML para tirar casi todos, porque el
+         navegador solo puede pintar los que tiene en pantalla. Ahora el navegador dice
+         cuáles son y se trabaja solo sobre esos. */
       $states=[];
       try{
-        $srows=db()->query("SELECT * FROM chat_messages WHERE room_id=".(int)$rid." AND (edited=1 OR deleted=1 OR id IN (SELECT message_id FROM chat_reactions)) ORDER BY id DESC LIMIT 150")->fetchAll();
-        $sids=array_map(fn($r)=>(int)$r['id'],$srows); $sById=[]; foreach($srows as $r) $sById[(int)$r['id']]=$r;
-        $sctx=['meId'=>$meId,'adminName'=>$adminName,'namesLower'=>$namesLower,'msgById'=>$sById,'reactMap'=>chat_reactions_for($sids,$meId)];
-        foreach($srows as $r){ $p=chat_msg_payload($r,$sctx); $states[]=['id'=>$p['id'],'html'=>$p['html'],'react'=>$p['react'],'edited'=>$p['edited'],'deleted'=>$p['deleted']]; }
+        $vis=chat_ids_post();
+        if($vis){
+          $in=implode(',',$vis);
+          $srows=db()->query("SELECT * FROM chat_messages WHERE room_id=".(int)$rid." AND id IN ($in) AND (edited=1 OR deleted=1 OR id IN (SELECT message_id FROM chat_reactions))")->fetchAll();
+          $sids=array_map(fn($r)=>(int)$r['id'],$srows); $sById=[]; foreach($srows as $r) $sById[(int)$r['id']]=$r;
+          $sctx=['meId'=>$meId,'adminName'=>$adminName,'namesLower'=>$namesLower,'msgById'=>$sById,'reactMap'=>chat_reactions_for($sids,$meId)];
+          foreach($srows as $r){ $p=chat_msg_payload($r,$sctx); $states[]=['id'=>$p['id'],'html'=>$p['html'],'react'=>$p['react'],'edited'=>$p['edited'],'deleted'=>$p['deleted']]; }
+        }
       }catch(Exception $e){}
       /* escribiendo… (menos yo) */
       $typing=[]; $now=time();
@@ -324,17 +374,32 @@ if (($_GET['ping']??'')==='1') {
   $after=(int)($_GET['after']??0);
   $rows=[]; $maxid=$after;
   try {
+    /* El tope no es cosmético: `after` sale de localStorage, así que la primera
+       vez que se abre el ERP en un navegador nuevo llega en 0 y esta consulta
+       devolvía los mensajes de TODA la historia para que el cliente los tirase
+       (solo necesitaba el id máximo). Con tope, ese primer impacto es pequeño. */
     $q=db()->prepare("SELECT m.id,m.room_id,m.admin_id,m.body,r.type,r.name
         FROM chat_messages m
         JOIN chat_members me ON me.room_id=m.room_id AND me.admin_id=?
         JOIN chat_rooms r ON r.id=m.room_id
-        WHERE m.id>? AND m.admin_id<>? ORDER BY m.id");
+        WHERE m.id>? AND m.admin_id<>? ORDER BY m.id DESC LIMIT 50");
     $q->execute([$meId,$after,$meId]);
-    foreach($q as $r){ $maxid=max($maxid,(int)$r['id']);
+    foreach($q as $r){
       $grp = ($r['type']==='group' && trim((string)$r['name'])!=='');
       $rows[]=['id'=>(int)$r['id'],'room'=>(int)$r['room_id'],'author'=>$adminName[(int)$r['admin_id']]??'?',
                'body'=>mb_substr(preg_replace('/\s+/u',' ',(string)$r['body']),0,120),
                'label'=>$grp?$r['name']:($adminName[(int)$r['admin_id']]??'Directo'),'group'=>$grp?1:0];
+    }
+    /* Con el tope la lista viene del revés (el aviso que se enseña es el último) y,
+       si se ha cortado, el último id ya no es el máximo real: eso solo pasa cuando
+       han entrado 50 o más mensajes de golpe, que es el caso raro. Con 49 o menos se
+       sabe con lo que ya viene y se ahorra una consulta en cada ping. */
+    $rows=array_reverse($rows);
+    if(count($rows)>=50){
+      $mq=db()->prepare("SELECT COALESCE(MAX(m.id),0) FROM chat_messages m JOIN chat_members me ON me.room_id=m.room_id AND me.admin_id=? WHERE m.id>? AND m.admin_id<>?");
+      $mq->execute([$meId,$after,$meId]); $maxid=max($after,(int)$mq->fetchColumn());
+    } else {
+      foreach($rows as $r) $maxid=max($maxid,(int)$r['id']);
     }
     $unread=(int)db()->query("SELECT COUNT(*) FROM chat_messages cm JOIN chat_members me ON me.room_id=cm.room_id AND me.admin_id=".$meId." WHERE cm.id>me.last_read AND cm.admin_id<>".$meId)->fetchColumn();
   } catch(Exception $e){ $unread=0; }
@@ -380,20 +445,27 @@ function room_label($r,$roomMembers,$adminName,$meId){
 if (isset($_GET['dm'])) { $dmId=(int)$_GET['dm']; if($dmId && $dmId!==$meId && isset($adminName[$dmId])){ header('Location: chat.php?room='.chat_dm_room($meId,$dmId)); exit; } }
 $curRoom = isset($_GET['room']) ? (int)$_GET['room'] : (count($rooms)?(int)$rooms[0]['id']:0);
 if ($curRoom && !chat_is_member($curRoom,$meId)) $curRoom = 0;
-$msgs = []; $readUpto = 0; $CH_MSGS = []; $curPres=''; $curOtherId=0;
+$msgs = []; $readUpto = 0; $CH_MSGS = []; $curPres=''; $curOtherId=0; $CH_MAS = 0;
 if ($curRoom) {
-  $q=db()->prepare('SELECT * FROM chat_messages WHERE room_id=? ORDER BY id'); $q->execute([$curRoom]); $msgs=$q->fetchAll();
+  /* Solo la última ventana. DESC+LIMIT+reverse para que MySQL baje por el índice
+     desde el final en vez de recorrer la sala entera; `reverse` la deja en orden
+     cronológico, que es como la pinta el JS. */
+  $q=db()->prepare('SELECT * FROM chat_messages WHERE room_id=? ORDER BY id DESC LIMIT '.CH_PAGINA); $q->execute([$curRoom]);
+  $msgs=array_reverse($q->fetchAll());
+  /* La ventana va hasta el final de la sala, así que su último elemento ES el id más
+     alto: no hace falta un MAX(id) aparte para marcar «leído hasta aquí». */
   $last=$msgs?(int)$msgs[count($msgs)-1]['id']:0;
   db()->prepare('UPDATE chat_members SET last_read=? WHERE room_id=? AND admin_id=?')->execute([$last,$curRoom,$meId]);
   $readUpto=(int)db()->query("SELECT COALESCE(MIN(last_read),0) FROM chat_members WHERE room_id=".(int)$curRoom." AND admin_id<>".$meId)->fetchColumn();
   /* Al abrir la sala el aviso de la campana sobra: ya lo has visto. */
   try { db()->prepare('DELETE FROM notifications WHERE admin_id=? AND ref=?')->execute([$meId,'chat:'.$curRoom.':'.$meId]); } catch (Exception $e) {}
   chat_presence_touch($meId, true);
+  /* ¿Queda historial por encima de la ventana? Se pregunta por el id más antiguo de
+     la sala, que con el índice de room_id es una lectura barata, en vez de contar. */
+  $minId=(int)db()->query('SELECT COALESCE(MIN(id),0) FROM chat_messages WHERE room_id='.(int)$curRoom)->fetchColumn();
+  $CH_MAS=($minId>0 && $msgs && (int)$msgs[0]['id']>$minId)?1:0;
   /* Payloads iniciales para el render en cliente. */
-  $msgById=[]; foreach($msgs as $m) $msgById[(int)$m['id']]=$m;
-  $ids=array_map(fn($m)=>(int)$m['id'],$msgs);
-  $ctx=['meId'=>$meId,'adminName'=>$adminName,'namesLower'=>$namesLower,'msgById'=>$msgById,'reactMap'=>chat_reactions_for($ids,$meId)];
-  $CH_MSGS=array_map(fn($m)=>chat_msg_payload($m,$ctx),$msgs);
+  $CH_MSGS=chat_payloads($msgs,$meId,$adminName,$namesLower);
 }
 $curRoomData = null; foreach($rooms as $r){ if((int)$r['id']===$curRoom) $curRoomData=$r; }
 $curPresState='offline';
@@ -480,6 +552,11 @@ erp_head('chat', 'Chat de equipo');
 .ch-top .ti span{font-size:12px;color:var(--muted)}
 .ch-feed{flex:1;overflow:auto;padding:26px 30px;display:flex;flex-direction:column;gap:4px}
 .ch-day{align-self:center;font-size:11px;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:99px;padding:4px 13px;margin:14px 0}
+.ch-older{align-self:center;font:inherit;font-size:12.5px;font-weight:600;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:99px;padding:7px 16px;margin:2px 0 4px;cursor:pointer;display:flex;align-items:center;gap:7px;-webkit-tap-highlight-color:transparent}
+.ch-older:hover{color:var(--ink);border-color:var(--line2)}
+.ch-older svg{width:14px;height:14px;flex:none}
+.ch-older.saltando{opacity:.5;cursor:default}
+[data-theme=dark] .ch-older{background:var(--card);border-color:var(--line)}
 .ch-msg{display:flex;gap:11px;max-width:74%;margin-top:14px}
 .ch-msg .mav{width:32px;height:32px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:650;font-size:11px;flex:none}
 .ch-msg .mb{background:#fff;border:1px solid var(--line);border-radius:14px;border-top-left-radius:4px;padding:10px 15px}
@@ -770,7 +847,9 @@ erp_head('chat', 'Chat de equipo');
       <div class="ti"><b><?php if($isGrp): ?><?= e($lbl) ?><?php else: ?><span data-uid="<?= (int)$curOtherId ?>"><?= e($lbl) ?></span><?php endif; ?></b><span id="chSub" data-def="<?= e($isGrp ? count($roomMembers[$curRoom]??[]).' miembros' : ($curPres?:'Mensaje directo')) ?>"><?php if(!$isGrp): ?><span class="pdot inl" id="chSubDot" style="background:<?= chat_presence_color($curPresState) ?>"></span><span<?= $curPresState==='online'?' class="online"':'' ?>><?= e($curPres?:'Mensaje directo') ?></span><?php else: ?><?= (int)count($roomMembers[$curRoom]??[]) ?> miembros<?php endif; ?></span></div>
       <button class="ch-hdbtn" title="Opciones" onclick="<?= $isGrp?'chGrpOpen()':'' ?>"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="19" r="1.9"/></svg></button>
     </div>
-    <div class="ch-feed" id="chFeed"></div>
+    <div class="ch-feed" id="chFeed">
+      <button type="button" class="ch-older" id="chOlder" style="display:none" onclick="chLoadOlder()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg><span id="chOlderTx">Cargar mensajes anteriores</span></button>
+    </div>
     <button class="ch-fab" id="chFab" onclick="chFeedBottom(true)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg><span class="fbadge" id="chFabN" style="display:none">0</span></button>
     <div class="ch-typing" id="chTyping"><span class="tdots"><i></i><i></i><i></i></span><span id="chTypingTx"></span></div>
     <div class="ch-replybar" id="chReplyBar"><span class="rb-l"></span><div class="rb-b"><div class="rb-a" id="chReplyA"></div><div class="rb-t" id="chReplyT"></div></div><button class="rb-x" onclick="chReplyCancel()">✕</button></div>
@@ -831,6 +910,7 @@ var CH_ME=<?= $meId ?>;
 var CH_ISGROUP=<?= ($curRoomData && $curRoomData['type']==='group')?'true':'false' ?>;
 var CH_READ=<?= (int)$readUpto ?>;
 var CH_MSGS=<?= json_encode($CH_MSGS, JSON_UNESCAPED_UNICODE) ?: '[]' ?>;
+var CH_MAS=<?= (int)$CH_MAS ?>;      // ¿queda historial por encima de la ventana?
 var CH_MEMBERS=[<?php foreach($admins as $a): ?>{id:<?= (int)$a['id'] ?>,name:<?= json_encode($a['username'],JSON_UNESCAPED_UNICODE) ?>,color:<?= json_encode(avatar_color($a['username'])) ?>,ini:<?= json_encode(mb_strtoupper(mb_substr($a['username'],0,2))) ?>},<?php endforeach; ?>];
 window.CH_ROOM=CH_ROOM;
 var REACT_QUICK=['👍','❤️','😂','😮','😢','🙏','🔥','👏'];
@@ -892,13 +972,92 @@ function chReactHtml(mid,react){
   return box;
 }
 function chImg(url){ if(window.lightbox) return lightbox(url); window.open(url,'_blank'); return false; }
-function chGoto(id){var el=document.querySelector('#chFeed .ch-msg[data-mid="'+id+'"]');if(!el)return;el.scrollIntoView({block:'center',behavior:'smooth'});el.style.transition='background .3s';el.style.background='rgba(47,111,237,.10)';setTimeout(function(){el.style.background='';},900);}
-function chRenderAll(){var f=document.getElementById('chFeed');if(!f)return;f.innerHTML='';var lastDay='';
+
+/* ---------- Mensajes anteriores (paginación del hilo) ---------- */
+var CH_OLDER=null;
+function chOlderBtn(tx){
+  var b=CH_OLDER||(CH_OLDER=document.getElementById('chOlder'));
+  if(!b) return;
+  b.style.display=CH_MAS?'':'none';
+  var t=document.getElementById('chOlderTx');
+  if(t&&tx) t.textContent=tx;
+}
+/* Inserta un lote más antiguo por arriba. El lote llega ya en orden ascendente
+   (el servidor hace ORDER BY DESC + array_reverse), así que no se invierte aquí.
+   Lo delicado es la costura: hay que decidir si el separador de día que hoy abre
+   el hilo (a) sigue valiendo, (b) se retira porque el lote continúa esa jornada y
+   ya trae el suyo, o (c) se deja y el lote va por encima porque es de días
+   anteriores. Equivocarlo produce días duplicados o un «lunes» en mitad del martes. */
+function chPrependOld(lote){
+  var f=document.getElementById('chFeed'); if(!f||!lote||!lote.length) return;
+  var primer=f.querySelector('.ch-msg'); if(!primer) return;
+  var dOld=(CH_MSGS[0]||{}).day;
+  var prev=primer.previousElementSibling;
+  var sep=(prev&&prev.className==='ch-day')?prev:null;
+  /* ¿El lote llega a abrir por su cuenta el día que ya abría el hilo? Entonces el
+     separador viejo sería un duplicado a media jornada. */
+  var dia=null,puse=false;
+  lote.forEach(function(m){ if(m.day!==dia){ dia=m.day; if(m.day===dOld) puse=true; } });
+  var ancla;
+  if(puse){ if(sep) f.removeChild(sep); ancla=primer; }
+  else if(lote[0].day===dOld){ ancla=primer; }   // continúa la jornada abierta
+  else { ancla=sep||primer; }                    // es de días anteriores: por encima
+  var dia2=null;
+  lote.forEach(function(m){
+    if(m.day!==dia2){ dia2=m.day; var dv=document.createElement('div'); dv.className='ch-day'; dv.textContent=m.datel; f.insertBefore(dv,ancla); }
+    f.insertBefore(chBuildMsg(m),ancla);
+  });
+  CH_MSGS=lote.concat(CH_MSGS);
+  chApplyRead(CH_READ);
+}
+/* Devuelve el alto que había antes de insertar y el desplazamiento corregido, para
+   que al subir un lote la vista no salte: lo que se tenía delante sigue delante. */
+function chGuardarScroll(){var f=document.getElementById('chFeed');return f?{h:f.scrollHeight,t:f.scrollTop}:null;}
+function chRestaurarScroll(g){var f=document.getElementById('chFeed');if(!f||!g)return;f.scrollTop=f.scrollHeight-g.h+g.t;}
+
+var _chOlderBusy=false;
+function chLoadOlder(){
+  var f=document.getElementById('chFeed');
+  if(!f||!CH_MAS||_chOlderBusy) return;
+  var primero=f.querySelector('.ch-msg'); if(!primero) return;
+  _chOlderBusy=true; chOlderBtn('Cargando…');
+  if(CH_OLDER) CH_OLDER.classList.add('saltando');
+  var g=chGuardarScroll();
+  var fd=new URLSearchParams();fd.set('action','older');fd.set('room_id',CH_ROOM);fd.set('before',primero.getAttribute('data-mid'));
+  fetch('chat.php',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(j){
+    _chOlderBusy=false; if(CH_OLDER) CH_OLDER.classList.remove('saltando');
+    if(!j||!j.ok){chOlderBtn();return;}
+    if(!j.messages||!j.messages.length){CH_MAS=0;chOlderBtn();return;}
+    CH_MAS=!!j.more; chPrependOld(j.messages); chRestaurarScroll(g); chOlderBtn();
+  }).catch(function(){_chOlderBusy=false;if(CH_OLDER)CH_OLDER.classList.remove('saltando');chOlderBtn();});
+}
+function chGoto(id){var el=chMsgEl(id);if(!el){chBuscarAtras(id,0);return;}chIrA(el);}
+function chMsgEl(id){return document.querySelector('#chFeed .ch-msg[data-mid="'+id+'"]');}
+function chIrA(el){el.scrollIntoView({block:'center',behavior:'smooth'});el.style.transition='background .3s';el.style.background='rgba(47,111,237,.10)';setTimeout(function(){el.style.background='';},900);}
+/* Cita a un mensaje que aún no está cargado (puede estar páginas atrás): se siguen
+   trayendo lotes hacia atrás hasta encontrarlo. Con tope de 10 lotes: si no está en
+   500 mensajes, ya no está y seguimos sin poder ir, pero no se martillea la base. */
+function chBuscarAtras(id,intentos){
+  if(intentos>=10||!CH_MAS||_chOlderBusy) return;
+  var g=chGuardarScroll(); _chOlderBusy=true;
+  var fd=new URLSearchParams();fd.set('action','older');fd.set('room_id',CH_ROOM);fd.set('before',(CH_MSGS[0]||{}).id||0);
+  fetch('chat.php',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(j){
+    _chOlderBusy=false;
+    if(!j||!j.ok||!j.messages||!j.messages.length){CH_MAS=0;chOlderBtn();return;}
+    CH_MAS=!!j.more; chPrependOld(j.messages); chRestaurarScroll(g); chOlderBtn();
+    var el=chMsgEl(id); if(el) chIrA(el); else chBuscarAtras(id,intentos+1);
+  }).catch(function(){_chOlderBusy=false;});
+}
+
+function chRenderAll(){var f=document.getElementById('chFeed');if(!f)return;
+  CH_OLDER=CH_OLDER||document.getElementById('chOlder');
+  f.innerHTML=''; if(CH_OLDER) f.appendChild(CH_OLDER);   // el botón no se pierde al redibujar
+  var lastDay='';
   CH_MSGS.forEach(function(m){ if(m.day!==lastDay){lastDay=m.day;var dv=document.createElement('div');dv.className='ch-day';dv.textContent=m.datel;f.appendChild(dv);}
     f.appendChild(chBuildMsg(m)); });
-  chApplyRead(CH_READ);chFeedBottom();}
+  chOlderBtn(); chApplyRead(CH_READ); chFeedBottom();}
 function chAppendNew(m){var f=document.getElementById('chFeed');if(!f)return;
-  if(document.querySelector('#chFeed .ch-msg[data-mid="'+m.id+'"]'))return;
+  if(chMsgEl(m.id))return;
   var last=CH_MSGS.length?CH_MSGS[CH_MSGS.length-1]:null;
   if(!last||last.day!==m.day){var dv=document.createElement('div');dv.className='ch-day';dv.textContent=m.datel;f.appendChild(dv);}
   CH_MSGS.push(m); f.appendChild(chBuildMsg(m));}
@@ -1047,10 +1206,21 @@ function chUpdSidebar(unread){if(!unread)return;
     if(n>0){if(!ub){ub=document.createElement('span');ub.className='ub';a.appendChild(ub);}ub.textContent=n;}else if(ub){ub.remove();}});}
 var _chNewCount=0;
 function chFeedNear(){var f=document.getElementById('chFeed');if(!f)return true;return (f.scrollHeight-f.scrollTop-f.clientHeight)<120;}
+/* Los ids que hay pintados ahora mismo. Es lo que el poll manda al servidor para
+   el refresco de reacciones/ediciones/borrados. */
+function chMsgIds(){var n=document.querySelectorAll('#chFeed .ch-msg[data-mid]'),a=[];
+  for(var i=0;i<n.length&&i<400;i++) a.push(n[i].getAttribute('data-mid')); return a.join(',');}
+/* Llegar arriba del hilo va trayendo el historial solo, sin tener que pulsar. */
+(function(){var f=document.getElementById('chFeed');if(f)f.addEventListener('scroll',function(){
+  if(f.scrollTop<80&&CH_MAS) chLoadOlder();});})();
 (function(){var f=document.getElementById('chFeed');if(f)f.addEventListener('scroll',function(){var fab=document.getElementById('chFab');if(!fab)return;if(chFeedNear()){fab.classList.remove('on');_chNewCount=0;var n=document.getElementById('chFabN');if(n)n.style.display='none';}else fab.classList.add('on');});})();
 
 /* ---------- Poll ---------- */
 function chPoll(){if(!CH_ROOM)return;var fd=new URLSearchParams();fd.set('action','poll');fd.set('room_id',CH_ROOM);fd.set('after',CH_LAST);
+  /* Se mandan los ids que hay en pantalla para que el servidor refresque reacciones,
+     ediciones y borrados solo de esos. Antes el servidor los adivinaba él con un
+     barrido de 150 filas de la sala cada 2,5 s. */
+  fd.set('ids',chMsgIds());
   fetch('chat.php',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(j){if(!j.ok)return;
     var near=chFeedNear();
     if(j.messages&&j.messages.length){ j.messages.forEach(function(m){chAppendNew(m);CH_LAST=Math.max(CH_LAST,parseInt(m.id,10));if(!m.mine&&!near){_chNewCount++;}});
