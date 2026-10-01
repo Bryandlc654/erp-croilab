@@ -533,6 +533,45 @@ function ensure_schema($forzar = false) {
            igual (más abajo). */
         if (!croilab_indices_al_dia($pdo)) croilab_migrar_indices($pdo);
 
+        /* Tablas puente para asignaciones múltiples en tareas (comentarios/checklist).
+           El código ya las usa con helpers (task_assigned, task_check_assigned), pero
+           en algunas instalaciones pueden no existir todavía. Se crean aquí de forma
+           idempotente, sin bloquear el arranque. */
+        if (!db_tabla_existe('task_assigned', $pdo)) {
+            $pdo->exec("CREATE TABLE task_assigned (
+                task_id INT NOT NULL,
+                admin_id INT NOT NULL,
+                PRIMARY KEY (task_id, admin_id),
+                KEY (admin_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        }
+        if (!db_tabla_existe('task_check_assigned', $pdo)) {
+            $pdo->exec("CREATE TABLE task_check_assigned (
+                check_id INT NOT NULL,
+                admin_id INT NOT NULL,
+                PRIMARY KEY (check_id, admin_id),
+                KEY (admin_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        }
+
+        /* Índices secundarios mínimos para el flujo de tareas. Idempotentes y
+           tolerantes: si alguna tabla no existe, croilab_indice_asegurar() lo ignora. */
+        $ix_tareas = [
+            ['tasks', 'ix_t_list_ord', '(list_id, orden, id)'],
+            ['tasks', 'ix_t_cli_list', '(client_id, list_id)'],
+            ['tasks', 'ix_t_cli_estado', '(client_id, estado)'],
+            ['tasks', 'ix_t_resp_estado', '(responsable_id, estado)'],
+            ['task_comments', 'ix_tc_task_crea', '(task_id, created_at, id)'],
+            ['task_checklist', 'ix_tk_task_done_ord', '(task_id, done DESC, orden, id)'],
+            ['task_attachments', 'ix_ta_task', '(task_id)'],
+            ['task_attachments', 'ix_ta_comment', '(comment_id)'],
+            ['task_comment_reactions', 'ix_tcr_comment_emoji', '(comment_id, emoji)'],
+            ['task_comment_reactions', 'uq_tcr_c_a_e', 'UNIQUE (comment_id, admin_id, emoji)'],
+        ];
+        foreach ($ix_tareas as $it) {
+            @croilab_indice_asegurar($pdo, $it[0], $it[1], $it[2]);
+        }
+
         /* Solo se sella si se ha llegado aquí entero. */
         croilab_sellar_esquema($pdo);
         $hecho = true;
