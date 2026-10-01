@@ -1,0 +1,46 @@
+# ============================================================================
+#  ERP-Croilab — protecciones de la raíz
+#  Mismas familias de directivas que uploads/.htaccess (Require, Options,
+#  FilesMatch, IfModule mod_headers.c). Ninguna directiva nueva.
+#
+#  Despliegue con reversión preparada: sube este fichero con otro nombre,
+#  comprueba la web, renómbralo a .htaccess, comprueba otra vez, y si algo
+#  falla, bórralo. Borrarlo es la reversión.
+# ============================================================================
+
+<IfModule mod_php.c>
+    php_flag expose_php off
+    php_flag display_errors off
+</IfModule>
+
+# 1) Nada de listados de directorio
+Options -Indexes -ExecCGI
+
+# 2) Ficheros que nunca deben servirse: secretos, control de versiones,
+#    copias, comprimidos, editores, volcados de base de datos. El segundo
+#    patrón cubre el .env y cualquier otro fichero que empiece por punto.
+<FilesMatch "^(\.env|\.env\.ejemplo|\.git|\.svn|\.hg|\.htaccess|\.htpasswd)$">
+    Require all denied
+</FilesMatch>
+<FilesMatch "^\.|\.(sql|bak|old|orig|save|swp|swo|log|ini|sh|py|pl|rb|psd|zip|tar|gz|tgz|bz2|7z|rar)$|~$|^\#">
+    Require all denied
+</FilesMatch>
+
+# 3) Los ficheros de inclusion de la raíz (config, db, auth) se cargan desde
+#    páginas ya protegidas. Un include de PHP lee del disco y NO pasa por
+#    Apache, así que bloquear la petición directa no rompe nada.
+<FilesMatch "^(config|db|auth)\.php$">
+    Require all denied
+</FilesMatch>
+
+# 4) No anunciar la versión de PHP ni del servidor, y cortar TRACE
+<IfModule mod_headers.c>
+    Header always unset X-Powered-By
+    Header always unset Server
+    Header set X-Content-Type-Options "nosniff"
+</IfModule>
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_METHOD} ^TRACE$
+    RewriteRule .* - [F]
+</IfModule>

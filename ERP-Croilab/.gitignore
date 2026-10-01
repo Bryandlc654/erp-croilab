@@ -1,0 +1,30 @@
+# Secretos: nunca al repositorio
+.env
+.env.ejemplo
+!.env.ejemplo
+config.local.php
+
+# Copias de seguridad de la corrección de seguridad
+_respaldo_seguridad_*/
+
+# Registro de errores (ahora fuera del docroot, pero por si acaso)
+php-error.log
+*.log
+
+# Subidas de los usuarios
+uploads/*
+!uploads/.htaccess
+uploads/**/.htaccess
+
+# Documentos de trabajo internos
+PLAN-*.md
+*.txt
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+sesion.log

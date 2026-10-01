@@ -1,0 +1,79 @@
+ERP DE CROILAB — INSTRUCCIONES DE INSTALACIÓN
+==============================================
+
+Qué hay en este paquete
+-----------------------
+  ERP-Croilab/             → todo lo que se sube al servidor (su CONTENIDO, no la carpeta)
+  LEEME-INSTALACION.txt    → este archivo (no se sube)
+
+El ERP está limpio: no trae clientes, tareas, facturas ni usuarios. La base de datos
+se crea sola al instalar.
+
+
+Requisitos del servidor
+-----------------------
+  - PHP 8.1 o superior (probado con 8.2) con: pdo_mysql, mbstring, gd (jpeg/png/webp),
+    curl y openssl. Hostinger los trae todos activados.
+  - MySQL 8 (o MariaDB 10.5+), con una base de datos VACÍA.
+  - Apache con .htaccess activado (protegen la carpeta uploads/).
+  - HTTPS activo.
+  - IMPORTANTE: el ERP tiene que ir en la RAÍZ de un dominio o subdominio
+    (ej. https://erp.croilab.com/), no dentro de una subcarpeta. La conexión con
+    Google usa la dirección fija /admin/... y no funcionaría en una subcarpeta.
+  - Recomendado: upload_max_filesize y post_max_size de 32M.
+
+
+Pasos
+-----
+1) Crear el subdominio (ej. erp.croilab.com) y una base de datos MySQL vacía
+   con su usuario. Apuntar: nombre de la base, usuario, contraseña y host.
+
+2) Editar ERP-Croilab/config.php y rellenar:
+     DB_HOST     (en Hostinger casi siempre 'localhost')
+     DB_NAME
+     DB_USER
+     DB_PASS
+     APP_SECRET  → cualquier texto largo y aleatorio (40+ caracteres). No cambiarlo
+                   después: con él se cifran los tokens de Google guardados.
+
+3) Subir TODO el contenido de ERP-Croilab/ a la carpeta raíz del subdominio
+   (index.php tiene que quedar en la raíz, junto a la carpeta admin/).
+   Comprobar que se han subido los archivos .htaccess de uploads/.
+   La carpeta uploads/ y sus subcarpetas tienen que tener permiso de escritura
+   para PHP (755 suele bastar en Hostinger).
+
+4) Abrir en el navegador:  https://SUBDOMINIO/install.php
+   Pide elegir el usuario y la contraseña del dueño (acceso total). Al terminar
+   crea todas las tablas.
+
+5) BORRAR install.php del servidor.
+
+6) Entrar en https://SUBDOMINIO/admin/ con el usuario creado.
+   El resto de tablas se crean solas al ir abriendo cada pantalla.
+
+7) Tarea programada (cron) — hPanel → Avanzado → Trabajos cron, cada 15 minutos:
+     php /home/USUARIO/domains/SUBDOMINIO/public_html/admin/cron.php
+   (ajustar la ruta a la real). Sin esto no salen solas las facturas recurrentes
+   ni los avisos del CRM.
+
+8) Conexión con Google (Calendar, entrar con Google, Analytics/Search Console):
+   en Google Cloud → Credenciales → el cliente OAuth, añadir como
+   "URI de redirección autorizados":
+     https://SUBDOMINIO/admin/gcal_callback.php
+     https://SUBDOMINIO/admin/gmet_callback.php
+   Después, en el ERP: Ajustes › Integraciones, pegar el ID y el secreto del
+   cliente OAuth y pulsar Conectar.
+
+
+Qué NO se sube (y por qué)
+--------------------------
+  - Ningún dato de pruebas del ordenador de desarrollo.
+  - migrate.php: solo servía para actualizar instalaciones antiguas.
+  - Scripts de pruebas internas.
+
+
+Portal de los clientes
+----------------------
+  Panel del equipo:      https://SUBDOMINIO/admin/
+  Portal del cliente:    https://SUBDOMINIO/login.php
+  (Los clientes y sus accesos se dan de alta desde el panel.)
