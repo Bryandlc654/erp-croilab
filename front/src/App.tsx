@@ -13,7 +13,7 @@ function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/tareas" element={<TasksApp />} />
             <Route path="/" element={<Navigate to="/tareas" replace />} />
-            <Route path="/*" element={<Navigate to="/tareas" replace />} />
+            <Route path="*" element={<Navigate to="/tareas" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>
