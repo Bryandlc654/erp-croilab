@@ -3,7 +3,7 @@
 function url(p: string) {
   if (p.startsWith('http')) return p
   const base = API_BASE.replace(/\/$/, '')
-  const path = p.startsWith('/') ? p : /
+  const path = p.startsWith('/') ? p : '/' + p
   return base + path
 }
 
