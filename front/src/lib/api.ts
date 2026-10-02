@@ -1,5 +1,14 @@
-﻿export async function apiPost<T = any>(path: string, body: any, csrf: string | null) {
-  const r = await fetch(path, {
+﻿const API_BASE = import.meta.env.VITE_API_URL ?? ''
+
+function url(p: string) {
+  if (p.startsWith('http')) return p
+  const base = API_BASE.replace(/\/$/, '')
+  const path = p.startsWith('/') ? p : /
+  return base + path
+}
+
+export async function apiPost<T = any>(path: string, body: any, csrf: string | null) {
+  const r = await fetch(url(path), {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -10,7 +19,8 @@
   })
   return (await r.json()) as T
 }
+
 export async function apiGet<T = any>(path: string) {
-  const r = await fetch(path, { credentials: 'include' })
+  const r = await fetch(url(path), { credentials: 'include' })
   return (await r.json()) as T
 }
