@@ -1,79 +1,99 @@
-ERP DE CROILAB — INSTRUCCIONES DE INSTALACIÓN
-==============================================
+ERP DE CROILAB — INSTALACIÓN Y DESPLIEGUE
+=========================================
 
-Qué hay en este paquete
------------------------
-  ERP-Croilab/             → todo lo que se sube al servidor (su CONTENIDO, no la carpeta)
-  LEEME-INSTALACION.txt    → este archivo (no se sube)
+Hay dos piezas que se despliegan por separado:
 
-El ERP está limpio: no trae clientes, tareas, facturas ni usuarios. La base de datos
-se crea sola al instalar.
+  backend/   API en PHP (https://api.TU-DOMINIO/)
+  front/     Aplicación React ya compilada en front/dist (https://app.TU-DOMINIO/admin/)
+
+Lo más sencillo es ponerlas en dos subdominios del MISMO dominio (app.x.com y
+api.x.com): así la cookie de sesión es del mismo sitio y funciona con
+COOKIE_SAMESITE=Lax en todos los navegadores.
 
 
 Requisitos del servidor
 -----------------------
-  - PHP 8.1 o superior (probado con 8.2) con: pdo_mysql, mbstring, gd (jpeg/png/webp),
-    curl y openssl. Hostinger los trae todos activados.
-  - MySQL 8 (o MariaDB 10.5+), con una base de datos VACÍA.
-  - Apache con .htaccess activado (protegen la carpeta uploads/).
-  - HTTPS activo.
-  - IMPORTANTE: el ERP tiene que ir en la RAÍZ de un dominio o subdominio
-    (ej. https://erp.croilab.com/), no dentro de una subcarpeta. La conexión con
-    Google usa la dirección fija /admin/... y no funcionaría en una subcarpeta.
-  - Recomendado: upload_max_filesize y post_max_size de 32M.
+  - PHP 8.1 o superior con pdo_mysql, mbstring, openssl, gd y curl.
+  - MySQL 8 o MariaDB 10.5+.
+  - Apache con .htaccess y mod_rewrite (la API entra toda por api/index.php).
+  - HTTPS.
+  - Acceso por SSH (para ejecutar las migraciones). Sin SSH vale un cron de una
+    sola vez con el mismo comando.
 
 
-Pasos
------
-1) Crear el subdominio (ej. erp.croilab.com) y una base de datos MySQL vacía
-   con su usuario. Apuntar: nombre de la base, usuario, contraseña y host.
-
-2) Editar ERP-Croilab/config.php y rellenar:
-     DB_HOST     (en Hostinger casi siempre 'localhost')
-     DB_NAME
-     DB_USER
-     DB_PASS
-     APP_SECRET  → cualquier texto largo y aleatorio (40+ caracteres). No cambiarlo
-                   después: con él se cifran los tokens de Google guardados.
-
-3) Subir TODO el contenido de ERP-Croilab/ a la carpeta raíz del subdominio
-   (index.php tiene que quedar en la raíz, junto a la carpeta admin/).
-   Comprobar que se han subido los archivos .htaccess de uploads/.
-   La carpeta uploads/ y sus subcarpetas tienen que tener permiso de escritura
-   para PHP (755 suele bastar en Hostinger).
-
-4) Abrir en el navegador:  https://SUBDOMINIO/install.php
-   Pide elegir el usuario y la contraseña del dueño (acceso total). Al terminar
-   crea todas las tablas.
-
-5) BORRAR install.php del servidor.
-
-6) Entrar en https://SUBDOMINIO/admin/ con el usuario creado.
-   El resto de tablas se crean solas al ir abriendo cada pantalla.
-
-7) Tarea programada (cron) — hPanel → Avanzado → Trabajos cron, cada 15 minutos:
-     php /home/USUARIO/domains/SUBDOMINIO/public_html/admin/cron.php
-   (ajustar la ruta a la real). Sin esto no salen solas las facturas recurrentes
-   ni los avisos del CRM.
-
-8) Conexión con Google (Calendar, entrar con Google, Analytics/Search Console):
-   en Google Cloud → Credenciales → el cliente OAuth, añadir como
-   "URI de redirección autorizados":
-     https://SUBDOMINIO/admin/gcal_callback.php
-     https://SUBDOMINIO/admin/gmet_callback.php
-   Después, en el ERP: Ajustes › Integraciones, pegar el ID y el secreto del
-   cliente OAuth y pulsar Conectar.
-
-
-Qué NO se sube (y por qué)
+Backend: instalación nueva
 --------------------------
-  - Ningún dato de pruebas del ordenador de desarrollo.
-  - migrate.php: solo servía para actualizar instalaciones antiguas.
-  - Scripts de pruebas internas.
+1) Crear una base de datos VACÍA y su usuario.
+
+2) Subir el CONTENIDO de backend/ a la raíz del subdominio de la API. No hace
+   falta subir vendor/ ni tests/ (solo son para desarrollo).
+
+3) Copiar backend/.env.ejemplo a .env (junto a config.php) y rellenarlo:
+     DB_HOST, DB_NAME, DB_USER, DB_PASS
+     APP_SECRET     64 caracteres aleatorios:  php -r "echo bin2hex(random_bytes(32));"
+     APP_URL        https://api.TU-DOMINIO
+     CORS_ORIGINS   https://app.TU-DOMINIO   (el origen del front)
+     FRONT_URL      https://app.TU-DOMINIO/admin   (adónde apuntan los enlaces de los correos)
+     SMTP_HOST, SMTP_PORT, SMTP_SEGURIDAD, SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_FROM_NOMBRE
+                    el buzón que envía los correos de «he olvidado mi contraseña».
+                    En Hostinger: crear un buzón (p. ej. no-responder@TU-DOMINIO) y usar
+                    smtp.hostinger.com, puerto 465, SMTP_SEGURIDAD=ssl.
+   Opcionales: COOKIE_SAMESITE, SESSION_DRIVER, BOVEDA_CLAVE, BOVEDA_CLAVE_FICHERO
+   (explicados en .env.ejemplo).
+
+4) Crear las tablas:
+     php bin/migrate.php
+
+5) Crear la cuenta del dueño (acceso total):
+     php bin/crear-dueno.php NOMBRE_DE_USUARIO --email=TU_CORREO
+   Pide la contraseña (mínimo 10 caracteres). El correo es al que llega el enlace
+   si un día olvidas la contraseña: sin él no se puede recuperar.
+
+6) Comprobar:  https://api.TU-DOMINIO/api/v1/auth/csrf  debe responder {"ok":true,...}
+   Y el correo: en /admin/login → «¿Has olvidado tu contraseña?» → tu usuario.
+   Si no llega, el motivo queda en el log de PHP (línea «Tarea diferida: SMTP: …»).
 
 
-Portal de los clientes
-----------------------
-  Panel del equipo:      https://SUBDOMINIO/admin/
-  Portal del cliente:    https://SUBDOMINIO/login.php
-  (Los clientes y sus accesos se dan de alta desde el panel.)
+Backend: actualizar una instalación que ya funciona
+---------------------------------------------------
+1) Copia de seguridad de la base de datos.
+2) Subir los ficheros nuevos.
+3) php bin/migrate.php
+   Mientras queden migraciones pendientes la API responde 503 ("El servidor se
+   está actualizando"); en cuanto terminan, vuelve a funcionar. Las migraciones
+   no borran datos: crean lo que falta y añaden columnas.
+   Ver qué falta sin aplicar nada:  php bin/migrate.php --estado
+
+
+Front
+-----
+1) En front/, crear .env.production con:
+     VITE_API_URL=https://api.TU-DOMINIO
+     VITE_BASE_PATH=/admin
+2) npm ci && npm run build      (genera front/dist)
+3) Subir el contenido de front/dist a la carpeta /admin del subdominio del front.
+4) Las rutas de la aplicación (/admin/tareas, /admin/login…) las resuelve React:
+   el servidor tiene que devolver /admin/index.html para cualquier ruta bajo
+   /admin que no sea un fichero. Con Apache, un .htaccess en /admin:
+     RewriteEngine On
+     RewriteBase /admin/
+     RewriteCond %{REQUEST_FILENAME} !-f
+     RewriteRule ^ index.html [L]
+
+
+Varios servidores (opcional)
+----------------------------
+Por defecto todo funciona en un solo servidor. Para poner varios detrás de un
+balanceador:
+  - SESSION_DRIVER=db       las sesiones van a la tabla `sessions`.
+  - BOVEDA_CLAVE=k1=...     la clave de cifrado viaja en la configuración en vez
+                            de en un fichero local.
+  - La carpeta uploads/ tiene que ser compartida (NFS o similar): los adjuntos
+    todavía se guardan en disco.
+
+
+Tarea programada (cron)
+-----------------------
+Las facturas recurrentes y los avisos del CRM dependían de admin/cron.php, que
+se eliminó con el panel antiguo. Hasta que esos módulos se pasen a la API no hay
+cron que configurar.

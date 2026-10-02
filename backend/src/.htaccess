@@ -1,0 +1,2 @@
+# Código y scripts internos: nunca se sirven por HTTP.
+Require all denied

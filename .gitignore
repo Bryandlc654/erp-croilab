@@ -1,0 +1,20 @@
+# Secretos: nunca al repositorio
+.env
+.env*.local
+.croilab-boveda
+
+# Copia local de despliegue con el .env real y las subidas
+/ERP-Croilab/
+
+# Registros
+*.log
+
+# Front
+node_modules/
+*.tsbuildinfo
+front/dist.local/
+front/package-lock.local.json
+
+# Backend: dependencias de desarrollo y caché de PHPUnit
+backend/vendor/
+backend/.phpunit.cache/

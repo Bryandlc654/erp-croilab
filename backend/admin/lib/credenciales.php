@@ -36,7 +36,7 @@ function credenciales_tablas() { return ['admins', 'clients']; }
 
 /* Crea lo que falte. Idempotente, y envuelto en un try porque no debe impedir
    que el ERP funcione aunque el usuario de MySQL no pueda hacer ALTER TABLE. */
-function credenciales_asegurar() {
+function credenciales_asegurar() { if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
     static $hecho = false;
     if ($hecho) return;
     $hecho = true;

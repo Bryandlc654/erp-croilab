@@ -52,7 +52,7 @@ function crm_activity($contact_id,$deal_id,$tipo,$desc){
 }
 
 /* Reuniones del CRM con su resultado (agendada / realizada / no_show / cancelada). */
-function crm_meetings_ensure(){ static $ok=false; if($ok) return; try{ db()->exec("CREATE TABLE IF NOT EXISTS crm_meetings (id INT AUTO_INCREMENT PRIMARY KEY, contact_id INT NOT NULL, fecha DATE, hora VARCHAR(10) DEFAULT '', titulo VARCHAR(200) DEFAULT '', estado VARCHAR(20) DEFAULT 'agendada', notas TEXT, notas_doc TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY(contact_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }catch(Exception $e){}
+function crm_meetings_ensure(){ if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */ static $ok=false; if($ok) return; try{ db()->exec("CREATE TABLE IF NOT EXISTS crm_meetings (id INT AUTO_INCREMENT PRIMARY KEY, contact_id INT NOT NULL, fecha DATE, hora VARCHAR(10) DEFAULT '', titulo VARCHAR(200) DEFAULT '', estado VARCHAR(20) DEFAULT 'agendada', notas TEXT, notas_doc TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY(contact_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }catch(Exception $e){}
   /* Tablas ya creadas antes de existir la columna: la añadimos si falta (resumen/notas de Gemini). */
   try{ db()->exec("ALTER TABLE crm_meetings ADD COLUMN notas_doc TEXT"); }catch(Exception $e){}
   $ok=true; }
@@ -114,7 +114,7 @@ function crm_all_tags(){ try{ return db()->query('SELECT * FROM crm_tags ORDER B
 function crm_tag_colors(){ return ['#2563eb','#0f7a3d','#c2410c','#a16207','#b91c1c','#7c3aed','#0e7490','#be185d','#475569','#0369a1']; }
 
 /* Crea/actualiza el esquema del CRM. Idempotente. */
-function ensure_crm_schema(){
+function ensure_crm_schema(){ if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
   static $done=false; if($done) return; $done=true;
   try{
     db()->exec("CREATE TABLE IF NOT EXISTS contacts (

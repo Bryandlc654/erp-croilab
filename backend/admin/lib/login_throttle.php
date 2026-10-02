@@ -18,7 +18,7 @@
    para que un cliente y un admin con el mismo usuario no se pisen.
    ============================================================ */
 
-function login_throttle_ensure() {
+function login_throttle_ensure() { if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
   static $done = false; if ($done) return; $done = true;
   try {
     db()->exec("CREATE TABLE IF NOT EXISTS login_attempts (

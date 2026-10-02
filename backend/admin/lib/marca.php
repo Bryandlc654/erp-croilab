@@ -17,7 +17,7 @@ require_once __DIR__ . '/../../db.php';
 
 /* La tabla de agencias nació sin datos de contacto: se le añaden aquí para que
    una instalación antigua se ponga al día sola al abrir cualquier página. */
-function marca_ensure() {
+function marca_ensure() { if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
     static $done = false; if ($done) return; $done = true;
     try {
         db()->exec("CREATE TABLE IF NOT EXISTS partner_agencies (

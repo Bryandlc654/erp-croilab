@@ -1,0 +1,11 @@
+# Todo /api/* lo atiende index.php (router de la API).
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# rutas.php solo se incluye desde index.php
+<Files "rutas.php">
+    Require all denied
+</Files>

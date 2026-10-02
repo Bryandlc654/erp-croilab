@@ -1,39 +1,5 @@
-# ============================================================================
-#  admin/lib - librerias internas del ERP
-#
-#  Aqui NO se deniega la ejecucion de los .php, y es deliberado. Estas librerias
-#  se incluyen desde las pantallas del panel con rutas relativas, asi que
-#  bloquearlas por Apache no impediria que un visitante las pidiera "por la
-#  puerta de atras": solo haria que el include de PHP leyera del disco (que no
-#  pasa por Apache) mientras la peticion directa devolvia 403. El panel entero
-#  dejaria de funcionar sin ganar nada.
-#
-#  Lo que si procede es quitar el listado, que es lo que faltaba: sin este
-#  fichero, abrir /admin/lib en el navegador devolvia la lista completa de los
-#  23 nombres de libreria.
-#
-#  Que pasa al abrir uno de estos ficheros directamente: nada. Se comprobo uno
-#  por uno y todos o bien solo definen funciones, o bien llaman a
-#  require_admin() y cortan con redireccion. Ninguno escribe nada por su cuenta.
-# ============================================================================
-
-# 1) Sin listado de directorio
+# Librerías: se cargan con require desde la API y las páginas que quedan, que
+# leen del disco sin pasar por Apache. Pedirlas por HTTP no tiene ningún uso
+# legítimo y ejecutaría código fuera de su contexto, así que se cierra todo.
 Options -Indexes -ExecCGI
-
-# 2) Lo que no sea PHP no tiene nada que hacer aqui
-<FilesMatch "\.(txt|log|sql|bak|old|ini|json|md|zip|tar|gz|7z|rar|sh|py|pl|rb|swp|psd|dmp)$">
-    Require all denied
-</FilesMatch>
-
-# 3) Ni los ficheros de control de acceso de Apache
-<FilesMatch "^\.|^(htaccess|htpasswd)$">
-    Require all denied
-</FilesMatch>
-
-# 4) Lo que el navegador podria ejecutar, se descarga
-<IfModule mod_headers.c>
-    <FilesMatch "\.(svg|svgz|html?|xhtml|xml|js|mjs|swf)$">
-        Header set Content-Disposition "attachment"
-    </FilesMatch>
-    Header set X-Content-Type-Options "nosniff"
-</IfModule>
+Require all denied

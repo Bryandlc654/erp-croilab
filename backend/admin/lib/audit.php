@@ -14,7 +14,7 @@
 
 function audit_log($accion, $detalle = '') {
     static $done = false;
-    if (!$done) {
+    if (!$done && !croilab_esquema_gestionado()) {   // con migraciones, la tabla ya existe
         $done = true;
         try {
             db()->exec("CREATE TABLE IF NOT EXISTS audit_log (

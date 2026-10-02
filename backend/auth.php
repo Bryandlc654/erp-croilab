@@ -273,6 +273,7 @@ function upload_mime_seguro($ext) {
    antes de incluir erp_nav.php o cualquier librería. Va detrás de e() y jdecode()
    porque permisos.php las usa (solo dentro de funciones, pero así queda claro el
    orden). El `file_exists` es por si alguna instalación no tiene la carpeta. */
+require_once __DIR__ . '/src/bootstrap.php';   // Acceso, en el que delega el alcance de permisos.php
 if (is_file(__DIR__ . '/admin/lib/permisos.php')) require_once __DIR__ . '/admin/lib/permisos.php';
 
 /* Comprobación automática: cualquier POST que llegue a una página que incluya

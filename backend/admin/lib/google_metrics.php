@@ -26,7 +26,7 @@ if (!function_exists('gm_setting')) {
 }
 
 /* Asegura las columnas por cliente (patrón DDL en caliente del ERP). */
-function gm_ensure_schema(){
+function gm_ensure_schema(){ if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
   foreach(['gsc_site_url'=>"VARCHAR(255) DEFAULT NULL",'ga4_property_id'=>"VARCHAR(40) DEFAULT NULL",'met_sync_at'=>"DATETIME DEFAULT NULL",
            'ga4_ev_ll'=>"VARCHAR(255) DEFAULT NULL",'ga4_ev_wa'=>"VARCHAR(255) DEFAULT NULL",'ga4_ev_fo'=>"VARCHAR(255) DEFAULT NULL"] as $col=>$def){
     try{ if(!db()->query("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='clients' AND column_name='$col'")->fetchColumn())

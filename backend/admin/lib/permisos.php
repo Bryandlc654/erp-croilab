@@ -298,7 +298,7 @@ function perm_config_solo_admin() {
   } catch (Exception $e) { error_log('perm_config_solo_admin: '.$e->getMessage()); }
 }
 
-function perm_migrar() {
+function perm_migrar() { if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
   static $hecho = false; if ($hecho) return; $hecho = true;
   perm_config_solo_admin();
 
@@ -346,7 +346,7 @@ function perm_label($clave) {
 }
 
 /* ---------- La tabla ---------- */
-function roles_ensure() {
+function roles_ensure() { if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
   static $done = false; if ($done) return; $done = true;
   try {
     db()->exec("CREATE TABLE IF NOT EXISTS roles (
@@ -559,96 +559,49 @@ function eur_vis($textoYaFormateado) {
   return puede_importes() ? $textoYaFormateado : '·····';
 }
 
-/* ¿Ve todo el ERP? */
+/* El alcance vive en src/Seguridad/Acceso.php (una sola implementación, con
+   tests). Estas funciones se mantienen con su nombre de siempre para el código
+   antiguo (archivo.php, factura.php, librerías) y delegan en ella. */
 function alcance_todo() {
-  if (!function_exists('can')) return true;
-  return can('alcance.todos');
+  if (!function_exists('current_admin') || !current_admin()) return false;
+  return \Croilab\Seguridad\Acceso::actual()->veTodo();
 }
 
-/* IDs de los clientes que puede ver. **null = todos** (no filtrar).
-   Devolver null y no la lista completa es a propósito: así quien filtra sabe
-   distinguir «puede verlo todo» de «no le toca ninguno», que son cosas muy
-   distintas y una lista vacía las confundiría. */
+/* IDs de los clientes que puede ver. **null = todos** (no filtrar). */
 function alcance_clientes() {
-  static $c = null; if ($c !== null) return $c === 'todos' ? null : $c;
-  if (alcance_todo()) { $c = 'todos'; return null; }
-
-  $yo = function_exists('current_admin') ? (int)(current_admin()['id'] ?? 0) : 0;
-  if (!$yo) { $c = []; return []; }
-
-  $ids = [];
-  try {
-    $sql = 'SELECT DISTINCT t.client_id FROM tasks t
-            LEFT JOIN task_assignees a ON a.task_id = t.id
-            WHERE t.client_id IS NOT NULL AND (t.responsable_id = ? OR a.admin_id = ?)';
-    $st = db()->prepare($sql); $st->execute([$yo, $yo]);
-    foreach ($st as $r) $ids[] = (int)$r['client_id'];
-  } catch (Exception $e) { error_log('alcance_clientes tareas: '.$e->getMessage()); }
-  try {
-    $st = db()->prepare('SELECT DISTINCT client_id FROM contacts WHERE client_id IS NOT NULL AND propietario_id = ?');
-    $st->execute([$yo]);
-    foreach ($st as $r) $ids[] = (int)$r['client_id'];
-  } catch (Exception $e) {}
-
-  $c = array_values(array_unique(array_filter($ids)));
-  return $c;
+  if (!function_exists('current_admin') || !current_admin()) return [];
+  return \Croilab\Seguridad\Acceso::actual()->clientesVisibles();
 }
 
-/* ¿Puede ver la ficha de este cliente? */
 function alcance_ve_cliente($clientId) {
   $ids = alcance_clientes();
-  if ($ids === null) return true;
-  return in_array((int)$clientId, $ids, true);
+  return $ids === null || in_array((int)$clientId, $ids, true);
 }
 
-/* Corta si no le toca ese cliente. Para las pantallas de ficha (client.php,
-   edit.php…), que reciben el id por la URL. */
+/* Corta si no le toca ese cliente. El 403 va antes porque la pantalla de
+   «no tienes permiso» termina en exit. */
 function alcance_exigir_cliente($clientId) {
   if (alcance_ve_cliente($clientId)) return;
-  /* El 403 va ANTES: perm_pantalla_denegado() termina en exit, así que cualquier
-     cosa puesta después no llega a ejecutarse y la respuesta se iría con un 200
-     — con la pantalla de «no tienes permiso», sí, pero indistinguible de un
-     acceso correcto para cualquier cosa que mire el código de estado. */
   http_response_code(403);
   if (function_exists('perm_pantalla_denegado')) perm_pantalla_denegado('ese cliente');
   exit;
 }
 
-/* Fragmento SQL para filtrar por cliente. Devuelve '' si ve todos.
-   Uso:  $sql = 'SELECT … FROM clients c WHERE 1 ' . alcance_sql('c.id');
-   Los ids salen de la propia base y se pasan por (int), así que la
-   interpolación es segura — pero NO metas aquí nada que venga del usuario. */
+/* Fragmento SQL para filtrar por cliente. Devuelve '' si ve todos. */
 function alcance_sql($columna) {
-  $ids = alcance_clientes();
-  if ($ids === null) return '';
-  if (!$ids) return ' AND 1=0 ';                     // no le toca ninguno
-  return ' AND '.$columna.' IN ('.implode(',', array_map('intval', $ids)).') ';
+  if (!function_exists('current_admin') || !current_admin()) return ' AND 1=0 ';
+  return \Croilab\Seguridad\Acceso::actual()->sqlClientes((string)$columna);
 }
 
-/* Filtro para TAREAS. Aquí el criterio es más fino que en el resto: no son las
-   tareas de «sus» clientes, son **las que tiene asignadas**, que es como funciona
-   ClickUp. Alguien puede llevar dos tareas de un cliente sin tener por qué ver
-   las otras treinta de ese mismo cliente.
-     $alias = alias de la tabla tasks en la consulta. */
+/* Filtro para TAREAS: las que tiene asignadas o de las que es responsable. */
 function alcance_sql_tareas($alias = 't') {
-  if (alcance_todo()) return '';
-  $yo = function_exists('current_admin') ? (int)(current_admin()['id'] ?? 0) : 0;
-  if (!$yo) return ' AND 1=0 ';
-  $a = preg_replace('/[^a-zA-Z0-9_]/', '', $alias);   // el alias lo pone el código, no el usuario
-  return " AND ({$a}.responsable_id={$yo} OR EXISTS(SELECT 1 FROM task_assignees za WHERE za.task_id={$a}.id AND za.admin_id={$yo})) ";
+  if (!function_exists('current_admin') || !current_admin()) return ' AND 1=0 ';
+  return \Croilab\Seguridad\Acceso::actual()->sqlTareas((string)$alias);
 }
 
-/* ¿Puede abrir esta tarea? Misma regla que el listado. */
 function alcance_ve_tarea($taskId) {
-  if (alcance_todo()) return true;
-  $yo = function_exists('current_admin') ? (int)(current_admin()['id'] ?? 0) : 0;
-  if (!$yo) return false;
-  try {
-    $st = db()->prepare('SELECT 1 FROM tasks t LEFT JOIN task_assignees a ON a.task_id=t.id
-                         WHERE t.id=? AND (t.responsable_id=? OR a.admin_id=?) LIMIT 1');
-    $st->execute([(int)$taskId, $yo, $yo]);
-    return (bool)$st->fetchColumn();
-  } catch (Exception $e) { return false; }
+  if (!function_exists('current_admin') || !current_admin()) return false;
+  return \Croilab\Seguridad\Acceso::actual()->veTarea((int)$taskId);
 }
 
 function alcance_exigir_tarea($taskId) {

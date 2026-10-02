@@ -1,5 +1,20 @@
 <?php
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/src/bootstrap.php';
+
+/* ¿El esquema lo llevan ya las migraciones (database/migrations)? Entonces las
+   funciones *_ensure() repartidas por las librerías no tienen nada que hacer en
+   cada petición: salen sin tocar MySQL. Mientras se migra (bin/migrate.php)
+   devuelve false para que esas mismas funciones creen lo que les toca. */
+function croilab_esquema_gestionado() {
+    if (defined('CROILAB_MIGRANDO')) return false;
+    static $r = null;
+    if ($r === null) {
+        try { $r = !\Croilab\Database\Migrador::hayPendientes(db()); }
+        catch (Throwable $e) { $r = false; }
+    }
+    return $r;
+}
 
 function db() {
     static $pdo = null;
@@ -17,6 +32,10 @@ function db() {
                fechas mostradas coincidan. date('P') da el offset actual ('+02:00'…). */
             $pdo->exec("SET time_zone = '" . date('P') . "'");
         } catch (PDOException $e) {
+            if (defined('CROILAB_API') || PHP_SAPI === 'cli') {
+                error_log('DB connect: ' . $e->getMessage());
+                throw new RuntimeException('No se puede conectar con la base de datos.', 0, $e);
+            }
             /* En dev (Docker) se muestra el detalle para poder depurar. En prod NO:
                el mensaje de MySQL puede llevar usuario/host/nombre de la base, así que
                se registra en el log y al visitante le sale un mensaje genérico. */
@@ -275,7 +294,21 @@ function croilab_indices_al_dia($pdo) {
    ejecutado migrate.php. Es idempotente, y solo entra en la
    comprobación completa cuando el sello no cuadra.
    =========================================================== */
-function ensure_schema($forzar = false) {
+/* Índices del flujo de tareas: [tabla, índice, columnas, único]. */
+const CROILAB_INDICES_TAREAS = [
+    ['tasks', 'ix_t_list_ord', ['list_id', 'orden', 'id'], false],
+    ['tasks', 'ix_t_cli_list', ['client_id', 'list_id'], false],
+    ['tasks', 'ix_t_cli_estado', ['client_id', 'estado'], false],
+    ['tasks', 'ix_t_resp_estado', ['responsable_id', 'estado'], false],
+    ['task_comments', 'ix_tc_task_crea', ['task_id', 'created_at', 'id'], false],
+    ['task_checklist', 'ix_tk_task_done_ord', ['task_id', 'done', 'orden', 'id'], false],
+    ['task_attachments', 'ix_ta_task', ['task_id'], false],
+    ['task_attachments', 'ix_ta_comment', ['comment_id'], false],
+    ['task_comment_reactions', 'ix_tcr_comment_emoji', ['comment_id', 'emoji'], false],
+    ['task_comment_reactions', 'uq_tcr_c_a_e', ['comment_id', 'admin_id', 'emoji'], true],
+];
+
+function ensure_schema($forzar = false) { if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
     /* Una sola pasada por petición aunque la llamen varias pantallas
        (pasa en _layout.php y en los ajustes). */
     static $hecho = false;
@@ -537,46 +570,25 @@ function ensure_schema($forzar = false) {
            El código ya las usa con helpers (task_assigned, task_check_assigned), pero
            en algunas instalaciones pueden no existir todavía. Se crean aquí de forma
            idempotente, sin bloquear el arranque. */
-        if (!db_tabla_existe('task_assigned', $pdo)) {
-            $pdo->exec("CREATE TABLE task_assigned (
-                task_id INT NOT NULL,
-                admin_id INT NOT NULL,
-                PRIMARY KEY (task_id, admin_id),
-                KEY (admin_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-        }
-        if (!db_tabla_existe('task_check_assigned', $pdo)) {
-            $pdo->exec("CREATE TABLE task_check_assigned (
-                check_id INT NOT NULL,
-                admin_id INT NOT NULL,
-                PRIMARY KEY (check_id, admin_id),
-                KEY (admin_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-        }
+        /* Con los nombres que usa el código (task_assignees, chk_assignees): antes
+           creaba task_assigned y task_check_assigned, que nadie lee. */
+        $pdo->exec("CREATE TABLE IF NOT EXISTS task_assignees (task_id INT NOT NULL, admin_id INT NOT NULL, orden INT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (task_id, admin_id), KEY (admin_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS chk_assignees (chk_id INT NOT NULL, admin_id INT NOT NULL, orden INT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (chk_id, admin_id), KEY (admin_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
         /* Índices secundarios mínimos para el flujo de tareas. Idempotentes y
            tolerantes: si alguna tabla no existe, croilab_indice_asegurar() lo ignora. */
-        $ix_tareas = [
-            ['tasks', 'ix_t_list_ord', '(list_id, orden, id)'],
-            ['tasks', 'ix_t_cli_list', '(client_id, list_id)'],
-            ['tasks', 'ix_t_cli_estado', '(client_id, estado)'],
-            ['tasks', 'ix_t_resp_estado', '(responsable_id, estado)'],
-            ['task_comments', 'ix_tc_task_crea', '(task_id, created_at, id)'],
-            ['task_checklist', 'ix_tk_task_done_ord', '(task_id, done DESC, orden, id)'],
-            ['task_attachments', 'ix_ta_task', '(task_id)'],
-            ['task_attachments', 'ix_ta_comment', '(comment_id)'],
-            ['task_comment_reactions', 'ix_tcr_comment_emoji', '(comment_id, emoji)'],
-            ['task_comment_reactions', 'uq_tcr_c_a_e', 'UNIQUE (comment_id, admin_id, emoji)'],
-        ];
-        foreach ($ix_tareas as $it) {
-            @croilab_indice_asegurar($pdo, $it[0], $it[1], $it[2]);
+        foreach (CROILAB_INDICES_TAREAS as $it) {
+            croilab_indice_asegurar($pdo, $it[0], $it[1], $it[2], $it[3]);
         }
 
         /* Solo se sella si se ha llegado aquí entero. */
         croilab_sellar_esquema($pdo);
         $hecho = true;
-    } catch (Exception $e) {
-        /* si algo falla, no bloquear la app */
+    } catch (Throwable $e) {
+        /* si algo falla, no bloquear la app (pero que quede en el log) */
+        error_log('ensure_schema: ' . $e->getMessage());
     }
 }
 

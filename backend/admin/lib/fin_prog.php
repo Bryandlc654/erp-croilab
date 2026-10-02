@@ -2,7 +2,7 @@
 /* Programaciones de facturas: tabla + generación automática mes a mes.
    Se incluye desde programaciones.php y facturas.php. */
 
-function prog_ensure(){
+function prog_ensure(){ if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
   static $done=false; if($done) return; $done=true;
   /* tablas base por si no se abrió facturas.php antes */
   db()->exec("CREATE TABLE IF NOT EXISTS invoices (id INT AUTO_INCREMENT PRIMARY KEY, numero VARCHAR(30), client_id INT DEFAULT NULL, cliente_nombre VARCHAR(200), cliente_nif VARCHAR(40) DEFAULT '', cliente_dir VARCHAR(300) DEFAULT '', cliente_email VARCHAR(160) DEFAULT '', fecha DATE, fecha_venc DATE DEFAULT NULL, estado VARCHAR(15) DEFAULT 'borrador', iva_pct DECIMAL(5,2) DEFAULT 21, irpf_pct DECIMAL(5,2) DEFAULT 0, notas TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -174,7 +174,7 @@ function fin_emisores_guardar(array $filas){
    al abrir Programaciones y Facturas en dos pestañas. Ahora cada serie tiene un
    contador que la base de datos incrementa de forma atómica.
    ============================================================ */
-function fin_counters_ensure(){
+function fin_counters_ensure(){ if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
   static $done=false; if($done) return; $done=true;
   try{
     db()->exec("CREATE TABLE IF NOT EXISTS invoice_counters (

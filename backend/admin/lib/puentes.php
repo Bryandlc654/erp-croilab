@@ -32,7 +32,7 @@ function pu_col($tabla, $col, $def) {
 
 /* Las columnas que cosen unos módulos con otros. Se llama al principio de
    cualquier página que use un puente; es idempotente y solo mira una vez. */
-function ensure_puentes_schema() {
+function ensure_puentes_schema() { if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
   static $done = false; if ($done) return; $done = true;
   pu_col('contacts',    'client_id',  'INT DEFAULT NULL');   // lead ya convertido -> qué cliente es
   pu_col('clients',     'contact_id', 'INT DEFAULT NULL');   // cliente -> de qué lead salió

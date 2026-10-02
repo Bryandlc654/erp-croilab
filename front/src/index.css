@@ -1,2 +1,63 @@
-:root { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-body { margin:0; background:#f6f7f9; }
+@import 'tailwindcss';
+
+/* Modo oscuro por clase: el botón de la luna pone .dark en <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Colores del panel: los mismos del ERP antiguo (erp_nav.php). Cada token
+   cambia solo en modo oscuro, así las pantallas usan `text-ink`, `bg-soft`,
+   `border-line`… sin repetir `dark:` en cada clase. */
+:root {
+  --c-bg: #ffffff;
+  --c-ink-strong: #22262c;
+  --c-ink: #3c4149;
+  --c-label: #656a72;
+  --c-muted: #656a72;
+  --c-line: #eeeeef;
+  --c-line2: #f6f6f7;
+  --c-soft: #f7f7f8;
+  --c-head: #fbfbfc;
+  --c-accent: #1f232a;
+  --c-tab-on: #111318;
+}
+.dark {
+  --c-bg: #0a0a0a;
+  --c-ink-strong: #fafafa;
+  --c-ink: #e6e6e6;
+  --c-label: #9a9a9a;
+  --c-muted: #a1a1a1;
+  --c-line: #282828;
+  --c-line2: #1c1c1c;
+  --c-soft: #242424;
+  --c-head: #141414;
+  --c-accent: #e5e5e5;
+  --c-tab-on: #e5e5e5;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-jakarta: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --color-page: var(--c-bg);
+  --color-ink-strong: var(--c-ink-strong);
+  --color-ink: var(--c-ink);
+  --color-label: var(--c-label);
+  --color-muted: var(--c-muted);
+  --color-line: var(--c-line);
+  --color-line2: var(--c-line2);
+  --color-soft: var(--c-soft);
+  --color-head: var(--c-head);
+  --color-accent: var(--c-accent);
+  --color-tab-on: var(--c-tab-on);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  background: var(--c-bg);
+  color: var(--c-ink);
+  @apply font-sans antialiased;
+}

@@ -25,7 +25,7 @@ require_once __DIR__ . '/publicar_lib.php';
 /* Días que se guarda lo borrado antes de limpiarlo solo. */
 if (!defined('PAP_DIAS')) define('PAP_DIAS', 30);
 
-function ensure_papelera_schema() {
+function ensure_papelera_schema() { if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
     static $done = false; if ($done) return; $done = true;
     try {
         db()->exec("CREATE TABLE IF NOT EXISTS trash (
@@ -174,6 +174,14 @@ function pap_borrar_flash($tabla, $id, $tipo, $titulo = '', $hijos = [], $msg = 
     $tid = pap_borrar($tabla, $id, $tipo, $titulo, $hijos);
     if ($tid) pap_undo_flash($tid, $msg ?: (pap_tipo_label($tipo) . ' eliminad' . (in_array($tipo,['tarea','factura','lista'],true)?'a':'o')));
     return $tid;
+}
+
+/* Tipo y autor de un elemento de la papelera, o null si ya no está. */
+function pap_elemento($tid) {
+    ensure_papelera_schema();
+    $st = db()->prepare('SELECT id, tipo, admin_id FROM trash WHERE id = ?');
+    $st->execute([(int)$tid]);
+    return $st->fetch() ?: null;
 }
 
 /* Vuelve a meter la fila (y sus hijas) donde estaban. */

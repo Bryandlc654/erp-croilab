@@ -42,6 +42,9 @@ function croilab_valor($clave, array $env)
     $v = getenv($clave);
     if ($v === false || $v === '') $v = isset($env[$clave]) ? $env[$clave] : '';
     if ($v === '') {
+        /* En la API (y en la consola) se lanza: quien llama responde en JSON o
+           con un mensaje de terminal. Solo las páginas antiguas pintan HTML. */
+        if (defined('CROILAB_API') || PHP_SAPI === 'cli') throw new RuntimeException("Falta la configuración: $clave");
         http_response_code(500);
         header('Content-Type: text/html; charset=utf-8');
         exit('<h1>Falta la configuración</h1><p>No está definido <code>' . htmlspecialchars($clave, ENT_QUOTES, 'UTF-8')
@@ -65,6 +68,14 @@ define('APP_SECRET', croilab_valor('APP_SECRET', $croilab_env));
    Se deja vacía a propósito: hasta que se rellene, esas pantallas siguen
    usando la cabecera, y así se nota al probar. */
 define('APP_URL', isset($croilab_env['APP_URL']) ? rtrim($croilab_env['APP_URL'], '/') : '');
+
+/* Ruta del fichero de clave de la bóveda (opcional). Vacío: el directorio padre
+   del público. Ver admin/lib/boveda.php. */
+if (!defined('BOVEDA_CLAVE_FICHERO')) {
+    $croilab_boveda = getenv('BOVEDA_CLAVE_FICHERO') ?: ($croilab_env['BOVEDA_CLAVE_FICHERO'] ?? '');
+    if ($croilab_boveda !== '') define('BOVEDA_CLAVE_FICHERO', $croilab_boveda);
+    unset($croilab_boveda);
+}
 
 /* Zona horaria */
 date_default_timezone_set('Europe/Madrid');

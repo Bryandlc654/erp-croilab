@@ -33,6 +33,16 @@ Options -Indexes -ExecCGI
     Require all denied
 </FilesMatch>
 
+# 3b) Carpetas y ficheros de desarrollo o internos del backend nuevo. Cada
+#     carpeta lleva además su propio .htaccess; esto cubre vendor/ (Composer).
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(vendor|tests|src|database|bin)(/|$) - [F,L]
+</IfModule>
+<FilesMatch "^(composer\.(json|lock)|phpunit\.xml|API\.md)$">
+    Require all denied
+</FilesMatch>
+
 # 4) No anunciar la versión de PHP ni del servidor, y cortar TRACE
 <IfModule mod_headers.c>
     Header always unset X-Powered-By

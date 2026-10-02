@@ -54,11 +54,6 @@
    clave en la base de datos. */
 
 /* ---------- Dónde vive el fichero de clave ---------- */
-function boveda_raiz() {
-    /* admin/lib/boveda.php → dos niveles arriba está el directorio público. */
-    $fuera = dirname(__DIR__, 2);
-    return is_dir($fuera) ? $fuera : sys_get_temp_dir();
-}
 function boveda_fichero_clave() {
     /* Si se define BOVEDA_CLAVE_FICHERO, la clave vive ahí. Se usa cuando la
        instalación tiene la clave en un volumen montado fuera del proyecto, que
@@ -66,7 +61,31 @@ function boveda_fichero_clave() {
     if (defined('BOVEDA_CLAVE_FICHERO') && (string)BOVEDA_CLAVE_FICHERO !== '') {
         return (string)BOVEDA_CLAVE_FICHERO;
     }
-    return boveda_raiz() . '/.croilab-boveda';
+    /* admin/lib/boveda.php: dos niveles arriba está el directorio público y tres
+       niveles arriba, su padre. Antes la clave iba en el directorio público, y
+       solo la protegía el .htaccess: con nginx o AllowOverride None se podía
+       descargar. Ahora va en el padre, como los registros. */
+    $fuera  = dirname(__DIR__, 3) . '/.croilab-boveda';
+    $legado = dirname(__DIR__, 2) . '/.croilab-boveda';
+    if (is_file($fuera)) return $fuera;
+    if (is_file($legado)) {
+        /* Instalación anterior: se mueve el fichero tal cual, sin regenerar la
+           clave, para no dejar ilegibles los tokens ya cifrados. */
+        if (is_writable(dirname($fuera)) && @rename($legado, $fuera)) {
+            boveda_aviso('fichero de clave movido fuera del directorio público: ' . $fuera);
+            return $fuera;
+        }
+        clearstatcache();
+        if (is_file($fuera)) return $fuera;   /* otra petición lo movió a la vez */
+        boveda_aviso('el fichero de clave sigue dentro del directorio público (' . $legado
+            . '): no se ha podido mover. Muévelo a mano o define BOVEDA_CLAVE_FICHERO');
+        return $legado;
+    }
+    /* Instalación nueva: fuera si se puede escribir ahí. Si no, la ruta antigua
+       (protegida por el .htaccess) mejor que la carpeta temporal compartida. */
+    if (is_dir(dirname($fuera)) && is_writable(dirname($fuera))) return $fuera;
+    boveda_aviso('no se puede escribir fuera del directorio público; la clave irá en ' . $legado);
+    return $legado;
 }
 
 /* Aviso una sola vez por petición, para no llenar el registro si algo falla. */
@@ -88,9 +107,16 @@ function boveda_claves() {
     if ($cache !== null) return $cache;
     $cache = [];
 
+    /* BOVEDA_CLAVE (entorno o .env): las mismas líneas `id=hex`, separadas por
+       comas, la vigente primero. Con varios servidores no hay disco compartido
+       donde dejar el fichero: la clave viaja con la configuración. */
+    $env = getenv('BOVEDA_CLAVE');
+    if ($env === false || $env === '') $env = $GLOBALS['croilab_env']['BOVEDA_CLAVE'] ?? '';
+    $desdeEntorno = trim((string)$env) !== '';
+
     $fichero = boveda_fichero_clave();
-    if (is_readable($fichero)) {
-        $lineas = file($fichero, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if ($desdeEntorno || is_readable($fichero)) {
+        $lineas = $desdeEntorno ? preg_split('/[\s,]+/', trim((string)$env)) : file($fichero, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         if (is_array($lineas)) {
             foreach ($lineas as $l) {
                 $l = trim($l);
@@ -108,7 +134,9 @@ function boveda_claves() {
         }
     }
 
-    if (!$cache) {
+    if (!$cache && $desdeEntorno) {
+        boveda_aviso('BOVEDA_CLAVE no tiene ninguna línea válida (id=64 caracteres hexadecimales)');
+    } elseif (!$cache) {
         /* No hay fichero: se intenta crearlo. Ojo al orden, porque aquí es donde
            se decide si la clave acaba guarding en la base de datos, que es lo
            que hay que evitar a toda costa. */

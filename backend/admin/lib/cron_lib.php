@@ -14,7 +14,7 @@ if (!defined('CRON_LOG_DIAS')) define('CRON_LOG_DIAS', 60);
 
 /* Registro de ejecuciones. Sin esto no hay forma de saber si el servidor está
    haciendo su trabajo o lleva tres semanas parado. */
-function cron_ensure() {
+function cron_ensure() { if (croilab_esquema_gestionado()) return;   /* el esquema lo crean las migraciones */
     static $done = false; if ($done) return; $done = true;
     try {
         db()->exec("CREATE TABLE IF NOT EXISTS cron_log (
