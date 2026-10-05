@@ -1,0 +1,15 @@
+# Vite copia el contenido de public/ a dist/, así que este fichero acaba en la
+# raíz del subdominio junto a index.html.
+#
+# Las rutas de la aplicación (/tareas, /login, /recuperar…) las resuelve React
+# Router en el navegador, no el servidor. Al recargar o al abrir un enlace
+# directo, Apache no encuentra ese fichero y devuelve 404 antes de que la app
+# tenga nada que decir. Esta reescritura devuelve index.html para que la app
+# pueda arrancar y decidir qué pantalla mostrar.
+RewriteEngine On
+
+# Solo si lo pedido no es un fichero real (assets, imágenes, etc. se sirven tal
+# cual) y no es un directorio.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]

@@ -74,16 +74,26 @@ Front
 -----
 1) En front/, crear .env.production con:
      VITE_API_URL=https://api.TU-DOMINIO
-     VITE_BASE_PATH=/admin
+     VITE_BASE_PATH=/        (app en la raíz del subdominio)
+     VITE_BASE_PATH=/admin   (app en https://TU-DOMINIO/admin)
+   Lo que pongas aquí tiene que coincidir con la ruta donde subas los ficheros:
+   Vite lo mete en el HTML como prefijo de cada <script src>, así que si no
+   cuadra la página carga en blanco (sin errores visibles en la consola) o da 404
+   en /assets.
 2) npm ci && npm run build      (genera front/dist)
-3) Subir el contenido de front/dist a la carpeta /admin del subdominio del front.
-4) Las rutas de la aplicación (/admin/tareas, /admin/login…) las resuelve React:
-   el servidor tiene que devolver /admin/index.html para cualquier ruta bajo
-   /admin que no sea un fichero. Con Apache, un .htaccess en /admin:
+3) Subir el CONTENIDO de front/dist a la carpeta correspondiente del subdominio
+   del front: la raíz si VITE_BASE_PATH=/, o la carpeta /admin si es /admin.
+4) Las rutas de la aplicación (/tareas, /login…) las resuelve React, no el
+   servidor: al recargar cualquiera de ellas tiene que devolverse index.html.
+   Sin esto, entrar por la URL directa da 404 aunque la raíz funcione.
+   En la raíz del subdominio, un .htaccess:
      RewriteEngine On
-     RewriteBase /admin/
      RewriteCond %{REQUEST_FILENAME} !-f
      RewriteRule ^ index.html [L]
+   Ojo: este .htaccess se lleva por delante TODO lo que hubiera en la raíz del
+   subdominio (un WordPress, un index.php propio…). Si el front comparte sitio
+   con otra aplicación, monta la app en su propia carpeta (/admin) en vez de en la
+   raíz, para que la reescritura no alcance a la otra.
 
 
 Varios servidores (opcional)
