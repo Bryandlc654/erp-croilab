@@ -37,14 +37,20 @@ Backend: instalación nueva
      DB_HOST, DB_NAME, DB_USER, DB_PASS
      APP_SECRET     64 caracteres aleatorios:  php -r "echo bin2hex(random_bytes(32));"
      APP_URL        https://api.TU-DOMINIO
-     CORS_ORIGINS   https://app.TU-DOMINIO   (el origen del front)
-     FRONT_URL      https://app.TU-DOMINIO/admin   (adónde apuntan los enlaces de los correos)
+     CORS_ORIGINS   https://erp.TU-DOMINIO   (el origen EXACTO del front, sin barra final)
+     FRONT_URL      https://erp.TU-DOMINIO   (adónde apuntan los enlaces de los correos)
      SMTP_HOST, SMTP_PORT, SMTP_SEGURIDAD, SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_FROM_NOMBRE
                     el buzón que envía los correos de «he olvidado mi contraseña».
                     En Hostinger: crear un buzón (p. ej. no-responder@TU-DOMINIO) y usar
                     smtp.hostinger.com, puerto 465, SMTP_SEGURIDAD=ssl.
-   Opcionales: COOKIE_SAMESITE, SESSION_DRIVER, BOVEDA_CLAVE, BOVEDA_CLAVE_FICHERO
-   (explicados en .env.ejemplo).
+   Opcionales: COOKIE_SAMESITE, COOKIE_DOMAIN, SESSION_DRIVER, BOVEDA_CLAVE,
+   BOVEDA_CLAVE_FICHERO (explicados en .env.ejemplo).
+
+   COOKIE_DOMAIN solo hace falta si el front y la API son SUBDOMINIOS DISTINTOS del
+   mismo dominio (api.TU-DOMINIO y erp.TU-DOMINIO). Entonces pon el dominio con
+   punto inicial, COOKIE_DOMAIN=.TU-DOMINIO, y deja COOKIE_SAMESITE=Lax: son el
+   mismo sitio para el navegador y no hace falta None. Si omites esa variable, el
+   navegador no lleva la cookie al front y el login responde 419.
 
 4) Crear las tablas:
      php bin/migrate.php

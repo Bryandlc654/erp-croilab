@@ -29,13 +29,57 @@ if (session_status() === PHP_SESSION_NONE && PHP_SAPI !== 'cli') {
     $sameSite = ucfirst(strtolower(trim((string)$sameSite)));
     if (!in_array($sameSite, ['Lax', 'Strict', 'None'], true)) $sameSite = 'Lax';
     $secure = $isHttps || $sameSite === 'None';
+
+    /* Dominio de la cookie.
+       Sin 'domain', la cookie queda atada al host que la emite: vale si el front
+       y la API son el MISMO host, y también en desarrollo (localhost:5173 llama
+       a localhost:8000). Pero si el front y la API son subdominios distintos
+       (erp.croilab.com y api.croilab.com), el navegador no manda la cookie de
+       la API al front, y como el login es una petición cross-origin con
+       credenciales la sesión no llega: da 419, no 401.
+
+       Para ese caso, COOKIE_DOMAIN=.croilab.com: el punto inicial hace que la
+       cookie valga para el dominio y todos sus subdominios. Con subdominios del
+       mismo registrable, SameSite=Lax sigue valiendo porque para el navegador es
+       el mismo sitio: no hace falta None.
+
+       OJO con poner aquí un dominio que no cubra el host de esta petición: el
+       navegador descarta una cookie cuyo Domain no cubre el host que la emite,
+       y el login se rompe sin avisar. Por eso sale de una variable explícita y
+       nunca se deduce de HTTP_HOST. */
+    $domain = getenv('COOKIE_DOMAIN');
+    if ($domain === false || $domain === '') $domain = $GLOBALS['croilab_env']['COOKIE_DOMAIN'] ?? '';
+    $domain = strtolower(trim((string)$domain));
+    if ($domain !== '' && str_starts_with($domain, '.')) $domain = substr($domain, 1);
+    /* Un dominio con puerto, ruta o sin punto no vale; se descarta en vez de
+       emitir una cookie que el navegador va a tirar. */
+    if ($domain !== '' && (str_contains($domain, ':') || str_contains($domain, '/') || !str_contains($domain, '.'))) $domain = '';
+
+    /* Y tiene que cubrir de verdad el host que sirve esta petición. Si no, el
+       navegador rechaza la cookie y el login falla con 419 sin decir por qué:
+       una cookie atada a api.croilab.com con Domain=.otrodominio.com se
+       descarta al vuelo. Antes de emitir ese Domain se comprueba que el host
+       acaba en el dominio; si no, se deja la cookie sin Domain (el
+       comportamiento de siempre) y se avisa por el log de errores, que es donde
+       se mire cuando el login no funcione. */
+    if ($domain !== '') {
+        $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
+        $host = strtok($host, ':') ?: '';                 /* sin puerto */
+        $cubre = $host !== ''
+            && ($host === $domain || str_ends_with($host, '.' . $domain));
+        if (!$cubre) {
+            error_log('croilab: COOKIE_DOMAIN=' . $domain . ' no cubre el host ' . $host
+                . '; se emite la cookie sin Domain. Revisa COOKIE_DOMAIN en el .env.');
+            $domain = '';
+        }
+    }
+    if ($domain !== '') $domain = '.' . $domain;
+
     session_set_cookie_params([
         'lifetime' => 0,
         'path'     => '/',
-        /* Sin 'domain': la cookie queda ligada solo al host que la emite y no se
-           comparte con subdominios. Ponerle HTTP_HOST hacía justo lo contrario
-           (Domain=x vale para *.x) y, con puerto (localhost:8000), el navegador
-           la descartaba. */
+        /* null = sin atributo Domain, ligado solo al host que emite. */
+        'domain'   => $domain !== '' ? $domain : null,
         'httponly' => true,
         'samesite' => $sameSite,
         'secure'   => $secure,

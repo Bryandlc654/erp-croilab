@@ -9,16 +9,28 @@ Un único punto de entrada: `backend/api/index.php`. Apache reescribe `/api/v1/*
 - Códigos: `400` datos mal formados · `401` sin sesión (`error: "sesion"`) · `403` sin permiso (`error: "permiso"`) ·
   `404` no existe o fuera de tu alcance · `405` método · `409` conflicto · `419` token CSRF (`error: "csrf"`) ·
   `422` validación (`error: "validacion"`, `campo` opcional) · `429` demasiados intentos · `500` interno · `503` base de datos con migraciones pendientes.
-- Sesión por cookie (`croilab_portal`, `HttpOnly`, `SameSite` según `COOKIE_SAMESITE`). Las peticiones
+- Sesión por cookie (`croilab_portal`, `HttpOnly`, `SameSite` según `COOKIE_SAMESITE`, `Domain` según `COOKIE_DOMAIN`). Las peticiones
   `POST`, `PATCH` y `DELETE` llevan la cabecera `X-CSRF-Token` (de `/auth/csrf`, `/auth/login` o `/me`).
 
-  `COOKIE_SAMESITE` va en el `.env` del servidor y admite `Lax` (por defecto), `Strict` o `None`.
-  Con `Lax`, el navegador manda la cookie solo si el front y la API comparten **sitio**, es decir
-  subdominios del mismo dominio (`app.croilab.com` + `api.croilab.com`) o el mismo host con puertos
-  distintos (`localhost:5173` + `localhost:8000`). Si el front se sirve desde otro dominio
-  registrable, la cookie no viaja y el login responde `419` con `error: "csrf"` — hay que poner
-  `COOKIE_SAMESITE=None`, que obliga a HTTPS.
+  Dos variables del `.env` del servidor deciden si el login funciona, y fallan por motivos distintos:
+
+  - `COOKIE_SAMESITE` (`Lax` por defecto, `Strict` o `None`). Con `Lax` el navegador manda la cookie
+    solo si el front y la API comparten **sitio**: subdominios del mismo dominio
+    (`erp.croilab.com` + `api.croilab.com`) o el mismo host con puertos distintos
+    (`localhost:5173` + `localhost:8000`). Si el front se sirve desde otro dominio registrable,
+    hace falta `None`, que obliga a HTTPS.
+  - `COOKIE_DOMAIN` (vacío por defecto). Sin `Domain`, la cookie va atada al host que la emite. Si el
+    front y la API son **subdominios distintos**, hace falta `COOKIE_DOMAIN=.croilab.com`: sin él el
+    navegador no lleva la cookie de la API al front y el login responde `419` con `error: "csrf"`
+    aunque `SameSite` esté bien. No hace falta tocar `COOKIE_SAMESITE` en este caso.
+
+  Si `COOKIE_DOMAIN` no contiene el dominio del host que sirve la API, se ignora (la cookie sale sin
+  `Domain`) y se avisa por el log de errores: un `Domain` equivocado hace que el navegador descarte
+  la cookie y el login falle sin dar la cara.
 - CORS: solo orígenes de `CORS_ORIGINS` (+ `http://localhost:5173`), con credenciales.
+  `CORS_ORIGINS` es **obligatorio** cuando el front no está en localhost: si el origen no está en la
+  lista, el navegador rechaza el preflight del `POST /auth/login` y el login falla con
+  `blocked by CORS policy` sin llegar a la API.
 - Paginación: `limit` (por defecto 50, máximo 200 salvo que se indique) y `offset`. La respuesta trae
   `items`, `total`, `limit`, `offset`.
 - Fechas `YYYY-MM-DD`. Ids enteros.
