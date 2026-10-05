@@ -59,9 +59,21 @@ class Acceso
         if (!$this->adminId) return $this->clientes = [];
 
         $ids = [];
+        /* Dos mitades con UNION en lugar de un LEFT JOIN con OR.
+           Escrito así, `t.responsable_id = ? OR a.admin_id = ?` sobre dos tablas
+           obligaba a MySQL a recorrer tasks entero (type=ALL) y además montar una
+           tabla temporal para el DISTINCT, porque un OR entre columnas de tablas
+           distintas no puede apoyarse en un índice. Con UNION cada mitad se
+           resuelve sola —responsable_id por ix_t_resp_estado, admin_id por el
+           índice de task_assignees— y se juntan al final. Mismos ids de salida. */
         $st = $this->pdo->prepare(
-            'SELECT DISTINCT t.client_id FROM tasks t LEFT JOIN task_assignees a ON a.task_id = t.id
-             WHERE t.client_id IS NOT NULL AND (t.responsable_id = ? OR a.admin_id = ?)'
+            'SELECT x.client_id FROM (
+                 SELECT t.client_id FROM tasks t
+                  WHERE t.client_id IS NOT NULL AND t.responsable_id = ?
+                 UNION
+                 SELECT t.client_id FROM task_assignees a JOIN tasks t ON t.id = a.task_id
+                  WHERE a.admin_id = ? AND t.client_id IS NOT NULL
+             ) x WHERE x.client_id IS NOT NULL'
         );
         $st->execute([$this->adminId, $this->adminId]);
         foreach ($st->fetchAll(PDO::FETCH_COLUMN) as $c) $ids[] = (int)$c;

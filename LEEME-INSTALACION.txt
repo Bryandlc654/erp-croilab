@@ -10,6 +10,11 @@ Lo más sencillo es ponerlas en dos subdominios del MISMO dominio (app.x.com y
 api.x.com): así la cookie de sesión es del mismo sitio y funciona con
 COOKIE_SAMESITE=Lax en todos los navegadores.
 
+Si el front acaba en OTRO dominio registrable (api.croilab.com y
+www.otrodominio.com, por ejemplo), Lax no vale: el navegador no manda la cookie
+y el login responde 419. En ese caso pon COOKIE_SAMESITE=None en el .env del
+servidor, que exige HTTPS.
+
 
 Requisitos del servidor
 -----------------------

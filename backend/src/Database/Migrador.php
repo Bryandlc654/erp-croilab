@@ -16,6 +16,7 @@ class Migrador
 {
     public const DIR = __DIR__ . '/../../database/migrations';
     private static ?bool $pendientes = null;
+    private static ?string $cacheFichero = null;
 
     /** @return array<string,string> versión => ruta, en orden */
     public static function archivos(string $dir = self::DIR): array
@@ -32,6 +33,7 @@ class Migrador
     public static function olvidar(): void
     {
         self::$pendientes = null;
+        self::$cacheFichero = null;
     }
 
     /** @return string[] versiones aplicadas */
@@ -44,15 +46,89 @@ class Migrador
         }
     }
 
-    /** Una consulta por petición (se recuerda). */
+    /**
+     * ¿Falta alguna migración? Cero consultas si nada ha cambiado desde la
+     * última comprobación.
+     *
+     * Antes costaba un SELECT a schema_migrations en cada petición HTTP, y con un
+     * MySQL a ~400 ms de latencia eran 400 ms de cada respuesta sólo para
+     * confirmar que el esquema estaba al día. El recordatorio estático de la
+     * clase no ayudaba: cada petición es un proceso nuevo.
+     *
+     * El resultado se guarda en un fichero de la carpeta temporal, con la huella
+     * de los ficheros de migración (nombre, tamaño y mtime) y el nombre de la
+     * base. Si al desplegar se sube una migración nueva, la huella cambia y se
+     * vuelve a preguntar. Fichero ilegible o no escribible: se cae a consultar,
+     * que es el comportamiento de siempre.
+     */
     public static function hayPendientes(PDO $pdo, string $dir = self::DIR): bool
     {
-        if (self::$pendientes === null || $dir !== self::DIR) {
-            $p = (bool)array_diff(array_keys(self::archivos($dir)), self::aplicadas($pdo));
-            if ($dir !== self::DIR) return $p;
-            self::$pendientes = $p;
+        if (self::$pendientes !== null) return self::$pendientes;
+
+        /* Un directorio distinto es un caso de los tests: nunca se cachea. */
+        if ($dir !== self::DIR) {
+            return (bool)array_diff(array_keys(self::archivos($dir)), self::aplicadas($pdo));
         }
-        return self::$pendientes;
+
+        $base = self::nombreBase($pdo);
+        $fichero = self::ficheroCache($base);
+        $huella = $base === null ? null : self::huella($base, $dir);
+
+        if ($huella !== null && is_readable($fichero)) {
+            $guardado = @file_get_contents($fichero);
+            if (is_string($guardado)) {
+                $d = json_decode($guardado, true);
+                if (is_array($d) && ($d['huella'] ?? null) === $huella && isset($d['pendientes'])) {
+                    return self::$pendientes = (bool)$d['pendientes'];
+                }
+            }
+        }
+
+        $p = (bool)array_diff(array_keys(self::archivos($dir)), self::aplicadas($pdo));
+        self::$pendientes = $p;
+        if ($huella !== null) self::guardarCache($fichero, $huella, $p);
+        return $p;
+    }
+
+    /**
+     * Nombre de la base sin gastar una consulta: DB_NAME ya la tiene config.php.
+     * Solo se pregunta a MySQL si faltara la constante.
+     */
+    private static function nombreBase(PDO $pdo): ?string
+    {
+        if (defined('DB_NAME') && DB_NAME !== '') return (string)DB_NAME;
+        try { $b = (string)$pdo->query('SELECT DATABASE()')->fetchColumn(); } catch (\PDOException $e) { return null; }
+        return $b !== '' ? $b : null;
+    }
+
+    /** Huella de las migraciones + base: si cambia cualquiera de las dos, el valor guardado ya no vale. */
+    private static function huella(string $base, string $dir): string
+    {
+        $f = [];
+        foreach (self::archivos($dir) as $v => $ruta) {
+            clearstatcache(true, $ruta);
+            $f[] = $v . ':' . basename($ruta) . ':' . @filemtime($ruta) . ':' . @filesize($ruta);
+        }
+        return hash('sha256', $base . '|' . implode('|', $f));
+    }
+
+    private static function ficheroCache(?string $base): string
+    {
+        if (self::$cacheFichero === null) {
+            self::$cacheFichero = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR
+                . 'croilab-migraciones-' . hash('sha256', (string)$base) . '.json';
+        }
+        return self::$cacheFichero;
+    }
+
+    private static function guardarCache(string $fichero, string $huella, bool $pendientes): void
+    {
+        $tmp = $fichero . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmp, json_encode(['huella' => $huella, 'pendientes' => $pendientes]), LOCK_EX) !== false) {
+            @rename($tmp, $fichero);   /* atómico: nunca se lee a medio escribir */
+        } else {
+            @unlink($tmp);
+        }
     }
 
     /**
@@ -87,6 +163,13 @@ class Migrador
             $nuevas[] = $version;
         }
         self::$pendientes = false;
+        /* La caché de hayPendientes() acaba de quedarse vieja: hay que
+           reescribirla o la API seguiría pensando que faltaban migraciones. */
+        self::$cacheFichero = null;
+        try {
+            $base = self::nombreBase($pdo);
+            if ($base !== null) self::guardarCache(self::ficheroCache($base), self::huella($base, self::DIR), false);
+        } catch (\Throwable $e) { /* la caché es una optimización, no un requisito */ }
         return $nuevas;
     }
 }

@@ -37,17 +37,38 @@ if (!headers_sent()) {
 }
 
 /* ---------- CLIENTE ---------- */
+/* `$cerrando` es una guarda de reentrada, y hace falta. Al invalidar la sesión
+   se llama a sesion_cerrar(), que acaba en audit_log(), que vuelve a llamar a
+   current_client(). Como la fila se pone a null ANTES de cerrar, el
+   `if ($c === null)` de la función se cumple otra vez y ésta se llama a sí misma
+   para siempre: un bucle que se come un worker de PHP y una conexión de MySQL
+   por petición, y no termina nunca.
+
+   En una petición web normal no se aprecia, porque sesion_cerrar() vacía
+   $_SESSION antes de llegar a audit_log() y entonces se sale por el
+   `empty($_SESSION[...])` de la primera línea. Pero en cuanto no hay sesión
+   activa —consola, o session_start() fallido porque el directorio de sesiones
+   no es escribible, que en hosting compartido es lo de siempre— $_SESSION no se
+   vacía y el bucle sí que se da. Con la guarda, la reentrada devuelve null al
+   instante: una consulta y un cierre, que es lo que se quería. */
 function current_client() {
     if (empty($_SESSION['client_id'])) return null;
-    static $c = null;
-    if ($c === null) {
-        $st = db()->prepare('SELECT * FROM clients WHERE id = ?');
-        $st->execute([$_SESSION['client_id']]);
-        $c = $st->fetch() ?: null;
-        /* La versión de credenciales se compara en cada petición. Si ha cambiado
-           desde que esta sesión se abrió, es porque alguien cambió la
-           contraseña: la sesión se tira y toca volver a entrar. */
-        if ($c && !cred_ver_coincide('clients', $c)) { $c = null; sesion_cerrar('credenciales cambiadas (cliente)'); }    }
+    static $c = null, $resuelto = false, $cerrando = false;
+    if (!$resuelto) {
+        $resuelto = true;              /* la fila se lee una vez por petición */
+        if (!$cerrando) {
+            $cerrando = true;
+            try {
+                $st = db()->prepare('SELECT * FROM clients WHERE id = ?');
+                $st->execute([$_SESSION['client_id']]);
+                $c = $st->fetch() ?: null;
+                /* La versión de credenciales se compara en cada petición. Si ha cambiado
+                   desde que esta sesión se abrió, es porque alguien cambió la
+                   contraseña: la sesión se tira y toca volver a entrar. */
+                if ($c && !cred_ver_coincide('clients', $c)) { $c = null; sesion_cerrar('credenciales cambiadas (cliente)'); }
+            } finally { $cerrando = false; }
+        }
+    }
     return $c;
 }
 
@@ -61,22 +82,33 @@ function require_client() {
 }
 
 /* ---------- ADMIN ---------- */
+/* La misma guarda de reentrada que en current_client(), y por el mismo motivo:
+   sesion_cerrar() → audit_log() → current_admin(). Sin ella, una sesión sin
+   'cred_ver' (es decir, abierta antes de que existiera esa columna, que
+   cred_ver_coincide() rechaza a propósito) convertía cada petición en un bucle
+   infinito. Ver la nota de current_client(). */
 function current_admin() {
     if (empty($_SESSION['admin_id'])) return null;
-    static $a = null;
-    if ($a === null) {
-        $st = db()->prepare('SELECT * FROM admins WHERE id = ?');
-        $st->execute([$_SESSION['admin_id']]);
-        $a = $st->fetch() ?: null;
-        /* Dos comprobaciones que antes no se hacían en ninguna parte:
-           - que la versión de credenciales siga igual. Si ha cambiado desde que
-             esta sesión se abrió, alguien cambió la contraseña, desactivó la
-             cuenta o le cambió el rol: la sesión se tira.
-           - que la cuenta siga activa. current_admin() buscaba por identificador
-             y no miraba este campo, así que a un miembro desactivado le
-             seguía funcionando la sesión que tenía abierta. */
-        if ($a && (int)($a['activo'] ?? 1) !== 1) { $a = null; sesion_cerrar('cuenta desactivada'); }
-        else if ($a && !cred_ver_coincide('admins', $a)) { $a = null; sesion_cerrar('credenciales cambiadas (admin)'); }
+    static $a = null, $resuelto = false, $cerrando = false;
+    if (!$resuelto) {
+        $resuelto = true;              /* la fila se lee una vez por petición */
+        if (!$cerrando) {
+            $cerrando = true;
+            try {
+                $st = db()->prepare('SELECT * FROM admins WHERE id = ?');
+                $st->execute([$_SESSION['admin_id']]);
+                $a = $st->fetch() ?: null;
+                /* Dos comprobaciones que antes no se hacían en ninguna parte:
+                   - que la versión de credenciales siga igual. Si ha cambiado desde
+                     que esta sesión se abrió, alguien cambió la contraseña,
+                     desactivó la cuenta o le cambió el rol: la sesión se tira.
+                   - que la cuenta siga activa. current_admin() buscaba por
+                     identificador y no miraba este campo, así que a un miembro
+                     desactivado le seguía funcionando la sesión que tenía abierta. */
+                if ($a && (int)($a['activo'] ?? 1) !== 1) { $a = null; sesion_cerrar('cuenta desactivada'); }
+                else if ($a && !cred_ver_coincide('admins', $a)) { $a = null; sesion_cerrar('credenciales cambiadas (admin)'); }
+            } finally { $cerrando = false; }
+        }
     }
     return $a;
 }

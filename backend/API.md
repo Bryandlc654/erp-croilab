@@ -11,6 +11,13 @@ Un único punto de entrada: `backend/api/index.php`. Apache reescribe `/api/v1/*
   `422` validación (`error: "validacion"`, `campo` opcional) · `429` demasiados intentos · `500` interno · `503` base de datos con migraciones pendientes.
 - Sesión por cookie (`croilab_portal`, `HttpOnly`, `SameSite` según `COOKIE_SAMESITE`). Las peticiones
   `POST`, `PATCH` y `DELETE` llevan la cabecera `X-CSRF-Token` (de `/auth/csrf`, `/auth/login` o `/me`).
+
+  `COOKIE_SAMESITE` va en el `.env` del servidor y admite `Lax` (por defecto), `Strict` o `None`.
+  Con `Lax`, el navegador manda la cookie solo si el front y la API comparten **sitio**, es decir
+  subdominios del mismo dominio (`app.croilab.com` + `api.croilab.com`) o el mismo host con puertos
+  distintos (`localhost:5173` + `localhost:8000`). Si el front se sirve desde otro dominio
+  registrable, la cookie no viaja y el login responde `419` con `error: "csrf"` — hay que poner
+  `COOKIE_SAMESITE=None`, que obliga a HTTPS.
 - CORS: solo orígenes de `CORS_ORIGINS` (+ `http://localhost:5173`), con credenciales.
 - Paginación: `limit` (por defecto 50, máximo 200 salvo que se indique) y `offset`. La respuesta trae
   `items`, `total`, `limit`, `offset`.

@@ -602,6 +602,26 @@ function get_setting($k, $def = '') {
     } catch (Exception $e) { return $def; }
 }
 
+/* Varios ajustes en UNA consulta. [clave => valor], con '' lo que no exista.
+ *
+ * Por qué existe: get_setting() es una consulta por clave, y leer cuatro claves
+ * de la marca blanca eran cuatro viajes de ida y vuelta a MySQL. Con la base de
+ * datos a ~400 ms de latencia (es un MySQL remoto, no local) eso son 1,6 s de
+ * espera en la petición que carga el menú, que es la primera de todas. Con esta
+ * función, las cuatro caben en un solo viaje. */
+function get_settings(array $claves): array {
+    $claves = array_values(array_unique(array_map('strval', $claves)));
+    if (!$claves) return [];
+    $out = array_fill_keys($claves, '');
+    try {
+        $in = implode(',', array_fill(0, count($claves), '?'));
+        $st = db()->prepare("SELECT clave, valor FROM settings WHERE clave IN ($in)");
+        $st->execute($claves);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $out[(string)$r['clave']] = (string)$r['valor'];
+    } catch (Exception $e) { /* p.ej. la tabla settings todavía no existe */ }
+    return $out;
+}
+
 /* ===========================================================
    TRANSACCIONES QUE SE PUEDEN ANIDAR
 
