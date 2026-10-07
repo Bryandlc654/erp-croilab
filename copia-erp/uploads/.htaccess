@@ -1,0 +1,27 @@
+# Carpeta de archivos subidos: aquí NO se ejecuta nada, nunca.
+# Segunda barrera por si algún día se cuela un archivo que no debería estar.
+# El acceso normal a estos archivos es por /archivo.php (que pide sesión).
+
+# 1) Nada de PHP ni CGI
+<FilesMatch "\.(php|php[0-9]|phtml|phar|pht|shtml|cgi|pl|py|rb|sh|htaccess|htpasswd)$">
+    Require all denied
+</FilesMatch>
+php_flag engine off
+<IfModule mod_php.c>
+    php_admin_flag engine off
+</IfModule>
+
+# 2) Sin listado de directorio
+Options -Indexes -ExecCGI
+AddHandler default-handler .php .phtml .phar .cgi .pl .py
+
+# 3) Lo que el navegador podría ejecutar se descarga, no se muestra
+<FilesMatch "\.(svg|svgz|html?|xhtml|xml|js|mjs|swf)$">
+    Header set Content-Disposition "attachment"
+    Header set Content-Type "application/octet-stream"
+</FilesMatch>
+
+# 4) Nunca adivinar el tipo por el contenido
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+</IfModule>
