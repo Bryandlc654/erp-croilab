@@ -58,6 +58,20 @@ if ($d === 'tasks' && function_exists('alcance_ve_tarea') && !alcance_todo()) {
     }
 }
 
+/* Igual con los adjuntos del CRM: sin alcance total solo se ven los de los
+   contactos propios o sin propietario (Crm\Alcance). La url guardada termina
+   en «f=<nombre>». */
+if ($d === 'crm' && function_exists('alcance_todo') && !alcance_todo()) {
+    $st = db()->prepare("SELECT c.propietario_id FROM attachments a JOIN contacts c ON c.id = a.contact_id
+                         WHERE a.url LIKE ? OR a.url LIKE ?");
+    $st->execute(['%f=' . $f, '%f=' . rawurlencode($f)]);
+    $duenos = $st->fetchAll(PDO::FETCH_COLUMN);
+    $acc = \Croilab\Seguridad\Acceso::actual();
+    if ($duenos && !array_filter($duenos, fn($p) => \Croilab\Modulos\Crm\Alcance::vePropietario($acc, $p === null ? null : (int)$p))) {
+        http_response_code(404); exit('No encontrado.');
+    }
+}
+
 $ext  = strtolower(pathinfo($ruta, PATHINFO_EXTENSION));
 $mime = upload_mime_seguro($ext);
 $forzarDescarga = ($mime === null) || (($_GET['dl'] ?? '') === '1');

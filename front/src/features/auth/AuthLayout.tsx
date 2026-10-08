@@ -50,7 +50,9 @@ export default function AuthLayout({ pestana, titulo, subtitulo, children }: Pro
   }, [pestana])
 
   return (
-    <div className="font-jakarta min-h-screen w-full bg-[#111215] text-white flex flex-col md:flex-row antialiased">
+    // text-base y tracking-normal: el body del panel va a 14px con -0,1px de
+    // espaciado (ERP); el login es otra maqueta y conserva los valores del navegador.
+    <div className="font-jakarta min-h-screen w-full bg-[#111215] text-base tracking-normal text-white flex flex-col md:flex-row antialiased">
       <aside className="relative w-full md:w-[48%] lg:w-[45%] xl:w-[42%] md:min-h-screen bg-[#111216] px-8 sm:px-12 lg:px-16 py-8 sm:py-12 flex flex-col justify-between md:border-r md:border-[#1e2025] select-none">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm text-black font-extrabold text-xl leading-none" aria-hidden="true">

@@ -26,4 +26,5 @@ if (CROILAB_TEST_DB) {
     require __DIR__ . '/../auth.php';
     require __DIR__ . '/../admin/lib/tareas_lib.php';
     require __DIR__ . '/../admin/lib/papelera.php';
+    require __DIR__ . '/../admin/lib/notificaciones.php';
 }

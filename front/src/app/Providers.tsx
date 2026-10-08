@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from '../features/auth/AuthProvider'
 import { ToastProvider } from '../shared/ui/Toast'
+import { ConfirmProvider } from '../shared/ui/ConfirmDialog'
 import { crearQueryClient } from './queryClient'
 
 /* El AuthProvider va dentro del QueryClientProvider: al cerrar o caducar la
@@ -11,7 +12,9 @@ export default function Providers({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={qc}>
       <AuthProvider>
-        <ToastProvider>{children}</ToastProvider>
+        <ToastProvider>
+          <ConfirmProvider>{children}</ConfirmProvider>
+        </ToastProvider>
       </AuthProvider>
     </QueryClientProvider>
   )

@@ -1,26 +1,22 @@
-import { useEffect } from 'react'
-import { CalendarDays, Flag, MessageSquare, Paperclip, X } from 'lucide-react'
+import { useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
+import { CalendarDays, ExternalLink, Flag, Paperclip, X } from 'lucide-react'
 import Avatar from '../../../shared/ui/Avatar'
+import { AttachmentList, RichTextView } from '../../../shared/ui/rich'
+import { fechaCorta } from '../../../shared/lib/formato'
 import EstadoCirculo from './EstadoCirculo'
 import { ESTADOS, PRIORIDADES } from '../constantes'
 import { useTarea } from '../api'
+import { useEquipo } from '../../nav/api'
+import { urlBackend, urlFichero } from '../enviar'
 
-/* La descripción y los comentarios se guardan como HTML del editor del ERP. Aquí
-   se enseña solo su texto: nunca se inyecta ese HTML en la página. */
-function texto(html: string | null | undefined) {
-  if (!html) return ''
-  const doc = new DOMParser().parseFromString(html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n'), 'text/html')
-  return (doc.body.textContent ?? '').replace(/\n{3,}/g, '\n\n').trim()
-}
-
-function fecha(iso: string | null) {
-  if (!iso) return '—'
-  const [y, m, d] = iso.slice(0, 10).split('-')
-  return `${d}/${m}/${y.slice(2)}`
-}
-
+/* Vista rápida de una tarea desde el tablero (cajón a la derecha). La
+   descripción llega en el formato del ERP y se pinta con RichTextView: nunca
+   se inyecta HTML. Para editar, «Abrir ficha» lleva a /tareas/:id. */
 export default function TareaDetalle({ id, onCerrar }: { id: number; onCerrar: () => void }) {
   const { data, error } = useTarea(id)
+  const { data: equipoData } = useEquipo()
+  const equipo = useMemo(() => equipoData ?? [], [equipoData])
 
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === 'Escape' && onCerrar()
@@ -34,14 +30,17 @@ export default function TareaDetalle({ id, onCerrar }: { id: number; onCerrar: (
   return (
     <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true" aria-label="Detalle de la tarea">
       <button type="button" className="absolute inset-0 bg-black/20 dark:bg-black/50" onClick={onCerrar} aria-label="Cerrar" />
-      <div className="relative flex h-full w-full max-w-[520px] flex-col overflow-y-auto border-l border-line bg-page shadow-2xl">
+      <div className="relative flex h-full w-full max-w-[520px] flex-col overflow-y-auto border-l border-line bg-page shadow-2xl motion-safe:animate-drawer-in">
         <div className="flex items-start gap-3 border-b border-line px-6 py-5">
           <div className="min-w-0 flex-1">
-            <p className="mb-1 truncate text-[12px] font-medium text-muted">
-              {t ? [t.client_name, t.list_name].filter(Boolean).join(' · ') : ' '}
-            </p>
+            <p className="mb-1 truncate text-[12px] font-medium text-muted">{t ? [t.client_name, t.list_name].filter(Boolean).join(' · ') : ' '}</p>
             <h2 className="text-[19px] leading-snug font-semibold text-ink-strong">{t?.titulo ?? (error ? 'No disponible' : 'Cargando…')}</h2>
           </div>
+          {t && (
+            <Link to={`/tareas/${t.id}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] font-semibold text-ink hover:bg-soft">
+              <ExternalLink className="size-3.5" /> Abrir ficha
+            </Link>
+          )}
           <button type="button" onClick={onCerrar} className="rounded-lg p-1.5 text-label hover:bg-soft hover:text-ink" aria-label="Cerrar detalle">
             <X className="size-5" />
           </button>
@@ -69,7 +68,7 @@ export default function TareaDetalle({ id, onCerrar }: { id: number; onCerrar: (
                 <CalendarDays className="size-3.5" /> Fechas
               </dt>
               <dd className="font-medium text-ink">
-                {fecha(t.fecha_inicio)} → {fecha(t.due_date)}
+                {fechaCorta(t.fecha_inicio, '—')} → {fechaCorta(t.due_date, '—')}
               </dd>
               <dt className="flex items-center gap-1.5 text-muted">
                 <Flag className="size-3.5" /> Prioridad
@@ -81,7 +80,11 @@ export default function TareaDetalle({ id, onCerrar }: { id: number; onCerrar: (
 
             <section>
               <h3 className="mb-2 text-[10.5px] font-bold tracking-[.7px] text-label uppercase">Descripción</h3>
-              <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap text-ink">{texto(t.descripcion) || <span className="text-label">Sin descripción.</span>}</p>
+              {t.descripcion.trim() ? (
+                <RichTextView value={t.descripcion} people={equipo} resolveFileUrl={urlFichero} className="text-[13.5px]" />
+              ) : (
+                <p className="text-[13.5px] text-label">Sin descripción.</p>
+              )}
             </section>
 
             {t.checklist.length > 0 && (
@@ -93,7 +96,7 @@ export default function TareaDetalle({ id, onCerrar }: { id: number; onCerrar: (
                   {t.checklist.map((c) => (
                     <li key={c.id} className={`flex items-center gap-2 ${c.done ? 'text-muted line-through' : 'text-ink'}`}>
                       <EstadoCirculo estado={c.done ? 'completada' : 'pendiente'} size={13} />
-                      {texto(c.texto)}
+                      {c.texto}
                     </li>
                   ))}
                 </ul>
@@ -105,34 +108,9 @@ export default function TareaDetalle({ id, onCerrar }: { id: number; onCerrar: (
                 <h3 className="mb-2 flex items-center gap-1.5 text-[10.5px] font-bold tracking-[.7px] text-label uppercase">
                   <Paperclip className="size-3" /> Adjuntos
                 </h3>
-                <ul className="flex flex-col gap-1 text-[13px] text-ink">
-                  {t.adjuntos.map((a) => (
-                    <li key={a.id} className="truncate">
-                      {a.nombre || a.filename}
-                    </li>
-                  ))}
-                </ul>
+                <AttachmentList items={t.adjuntos.map((a) => ({ id: a.id, nombre: a.nombre, url: urlBackend(a.url), mime: a.mime || null }))} />
               </section>
             )}
-
-            <section>
-              <h3 className="mb-3 flex items-center gap-1.5 text-[10.5px] font-bold tracking-[.7px] text-label uppercase">
-                <MessageSquare className="size-3" /> Comentarios · {t.comentarios.length}
-              </h3>
-              <ul className="flex flex-col gap-4">
-                {t.comentarios.map((c) => (
-                  <li key={c.id} className="flex gap-2.5">
-                    <Avatar nombre={c.username ?? '?'} size={24} />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[12px] text-muted">
-                        <b className="font-semibold text-ink-strong">{c.username ?? 'Alguien'}</b> · {fecha(c.created_at)}
-                      </p>
-                      <p className="mt-0.5 text-[13px] leading-relaxed whitespace-pre-wrap text-ink">{texto(c.cuerpo)}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
           </div>
         )}
       </div>

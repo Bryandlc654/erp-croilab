@@ -228,24 +228,9 @@ function fin_next_numero($serie, $emisor='victor', $fecha=null){
    ============================================================ */
 function fin_sync_accounting($invoiceId){
   $invoiceId=(int)$invoiceId; if(!$invoiceId) return;
-  try{
-    $q=db()->prepare('SELECT * FROM invoices WHERE id=?'); $q->execute([$invoiceId]); $inv=$q->fetch();
-    db()->prepare('DELETE FROM accounting WHERE invoice_id=?')->execute([$invoiceId]);
-    if(!$inv || ($inv['estado']??'')!=='pagada') return;   // aún no ha entrado el dinero
-
-    $b=db()->prepare('SELECT COALESCE(SUM(cantidad*precio),0) FROM invoice_items WHERE invoice_id=?'); $b->execute([$invoiceId]);
-    $sub=(float)$b->fetchColumn();
-    $total=$sub*(1+((float)($inv['iva_pct']??0))/100-((float)($inv['irpf_pct']??0))/100);
-    $efectivo=(int)($inv['efectivo']??0);
-    $emisor=fin_emisor_ok($inv['emisor']??'');
-    /* Fecha de caja: el día del cobro si se conoce; si no, la de la factura. */
-    $fecha=$inv['fecha_pago'] ?: $inv['fecha'];
-
-    db()->prepare('INSERT INTO accounting (fecha,tipo,concepto,categoria,importe,metodo,legal,ambito,deducible,personal,project_id,client_id,invoice_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      ->execute([$fecha,'ingreso','Factura '.$inv['numero'].' · '.$inv['cliente_nombre'],'Cliente',$total,
-                 $efectivo?'efectivo':'transferencia',$efectivo?0:1,$emisor,0,(int)($inv['personal']??0),
-                 $inv['project_id']??null,$inv['client_id']??null,$invoiceId]);
-  }catch(Exception $e){ error_log('fin_sync_accounting #'.$invoiceId.': '.$e->getMessage()); }
+  /* Una sola regla de caja (y de redondeo) para todo el ERP: la del módulo nuevo. */
+  try{ $m=new \Croilab\Modulos\Finanzas\Modulo(db()); $m->caja()->sincronizarFactura($invoiceId); }
+  catch(Exception $e){ error_log('fin_sync_accounting #'.$invoiceId.': '.$e->getMessage()); }
 }
 
 /* Limpieza única: retira de la caja los ingresos de facturas que nunca se
@@ -286,23 +271,13 @@ function prog_gen_invoice($s,$ym){
   return $iid;
 }
 
-/* recorre las programaciones activas y genera lo que toque hasta el mes actual */
+/* recorre las programaciones activas y genera lo que toque hasta el mes actual.
+   Delega en el módulo nuevo (bloqueo, transacción por mes e idempotencia por
+   programación+mes): ver src/Modulos/Finanzas/ProgramacionesServicio.php. */
 function prog_run(){
-  prog_ensure();
-  try{ $rows=db()->query("SELECT * FROM invoice_schedules WHERE activo=1")->fetchAll(); }catch(Exception $e){ return 0; }
-  $cur=date('Y-m'); $today=(int)date('j'); $made=0;
-  foreach($rows as $s){
-    $ym = $s['last_ym']!=='' ? date('Y-m', strtotime($s['last_ym'].'-01 +1 month')) : ($s['start_ym']!==''?$s['start_ym']:$cur);
-    $guard=0;
-    while($ym<=$cur && $guard<60){
-      $guard++;
-      $isCurrent=($ym===$cur);
-      if($isCurrent && $today < max(1,min(28,(int)$s['dia']))) break; // este mes aún no toca
-      prog_gen_invoice($s,$ym); $made++;
-      db()->prepare('UPDATE invoice_schedules SET last_ym=? WHERE id=?')->execute([$ym,$s['id']]);
-      if($isCurrent) break;
-      $ym=date('Y-m', strtotime($ym.'-01 +1 month'));
-    }
+  if (class_exists(\Croilab\Modulos\Finanzas\Modulo::class)) {
+    $r = (new \Croilab\Modulos\Finanzas\Modulo(db()))->programaciones()->ejecutar(null);
+    return (int)$r['generadas'];
   }
-  return $made;
+  return 0;
 }

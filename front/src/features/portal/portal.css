@@ -1,0 +1,65 @@
+/* Colores del portal del cliente: los del portal antiguo (index.php), que no
+   son los del panel. Se usan con Tailwind como `bg-(--p-card)`, `text-(--p-muted)`…
+   El modo oscuro es el mismo .dark del resto de la app. */
+.portal {
+  --p-bg: #f5f5f7;
+  --p-card: #ffffff;
+  --p-card2: #ffffff;
+  --p-soft: #f7f7f8;
+  --p-dark: #0f1012;
+  --p-ink: #22262c;
+  --p-ink-strong: #22262c;
+  --p-muted: #9aa0a8;
+  --p-line: #eeeeef;
+  --p-acc: #1f232a;
+  --p-acc-fg: #ffffff;
+  --p-acc-soft: #f2f2f3;
+  --p-green: #12a150;
+  --p-red: #ef4444;
+  --p-shadow: 0 1px 2px rgba(16, 19, 24, 0.04), 0 10px 26px -18px rgba(16, 19, 24, 0.12);
+  --p-chart-fill: rgba(31, 35, 42, 0.1);
+  color-scheme: light;
+}
+.dark .portal {
+  --p-bg: #0a0a0a;
+  --p-card: #161616;
+  --p-card2: #1f1f1f;
+  --p-soft: #242424;
+  --p-ink: #e6e6e6;
+  --p-ink-strong: #fafafa;
+  --p-muted: #a1a1a1;
+  --p-line: #282828;
+  --p-acc: #3b82f6;
+  --p-acc-fg: #ffffff;
+  --p-acc-soft: #20242e;
+  --p-shadow: 0 1px 2px rgba(0, 0, 0, 0.6), 0 10px 26px -18px rgba(0, 0, 0, 0.85);
+  --p-chart-fill: rgba(59, 130, 246, 0.18);
+  color-scheme: dark;
+}
+.portal {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+/* Bloques del editor en vivo: borde degradado naranja animado, como el antiguo. */
+@keyframes portal-borde {
+  to {
+    background-position: 200% 0;
+  }
+}
+.portal-editable {
+  position: relative;
+  border-radius: 22px;
+  padding: 2px;
+  background: linear-gradient(90deg, #ff9500, #ffcc00, #ff5e3a, #ff9500) 0 0 / 200% 100%;
+  animation: portal-borde 4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .portal-editable {
+    animation: none;
+  }
+}
+@media print {
+  .portal {
+    background: #fff !important;
+  }
+}

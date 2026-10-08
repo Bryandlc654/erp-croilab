@@ -5,7 +5,8 @@
 
 /* Colores del panel: los mismos del ERP antiguo (erp_nav.php). Cada token
    cambia solo en modo oscuro, así las pantallas usan `text-ink`, `bg-soft`,
-   `border-line`… sin repetir `dark:` en cada clase. */
+   `border-line`… sin repetir `dark:` en cada clase. En claro `page` y `card`
+   son blancos; en oscuro la tarjeta se separa del fondo (#0a0a0a / #161616). */
 :root {
   --c-bg: #ffffff;
   --c-ink-strong: #22262c;
@@ -18,6 +19,31 @@
   --c-head: #fbfbfc;
   --c-accent: #1f232a;
   --c-tab-on: #111318;
+
+  --c-card: #ffffff;
+  --c-pop: #ffffff;
+  --c-field: #ffffff;
+  --c-line-strong: #dcdcde;
+  --c-ring: #c4c4c7;
+  --c-ring-soft: rgba(17, 19, 24, 0.07);
+  --c-accent-soft: #f2f2f3;
+  --c-accent-fg: #ffffff;
+  --c-rev: #111318;
+  --c-rev-fg: #ffffff;
+  --c-nav-ink: #4c515b;
+  --c-badge-bg: #feecec;
+  --c-badge-fg: #e5484d;
+  --c-ok: #0f7a3d;
+  --c-ok-bg: #eafaf0;
+  --c-ok-line: #cfe9d6;
+  --c-danger: #c62a33;
+  --c-danger-bg: #fbeeee;
+  --c-danger-line: #f0caca;
+  --c-warn: #b7791f;
+  --c-hover-row: #fafbfc;
+  --c-chip: #eef0f3;
+  --c-scroll: rgba(0, 0, 0, 0.15);
+  --c-scroll-hover: rgba(0, 0, 0, 0.3);
 }
 .dark {
   --c-bg: #0a0a0a;
@@ -31,6 +57,31 @@
   --c-head: #141414;
   --c-accent: #e5e5e5;
   --c-tab-on: #e5e5e5;
+
+  --c-card: #161616;
+  --c-pop: #1f1f1f;
+  --c-field: #0f0f0f;
+  --c-line-strong: #3a3a3a;
+  --c-ring: #4a4a4a;
+  --c-ring-soft: rgba(255, 255, 255, 0.08);
+  --c-accent-soft: #262626;
+  --c-accent-fg: #171717;
+  --c-rev: #e5e5e5;
+  --c-rev-fg: #171717;
+  --c-nav-ink: #b5b5b5;
+  --c-badge-bg: #3a2327;
+  --c-badge-fg: #f0999a;
+  --c-ok: #54cd8e;
+  --c-ok-bg: #14251c;
+  --c-ok-line: #234436;
+  --c-danger: #f08d82;
+  --c-danger-bg: #2e1d1d;
+  --c-danger-line: #472a2a;
+  --c-warn: #efb445;
+  --c-hover-row: rgba(255, 255, 255, 0.03);
+  --c-chip: #242424;
+  --c-scroll: rgba(255, 255, 255, 0.15);
+  --c-scroll-hover: rgba(255, 255, 255, 0.3);
   color-scheme: dark;
 }
 
@@ -49,15 +100,280 @@
   --color-head: var(--c-head);
   --color-accent: var(--c-accent);
   --color-tab-on: var(--c-tab-on);
+
+  --color-card: var(--c-card);
+  --color-pop: var(--c-pop);
+  --color-field: var(--c-field);
+  --color-line-strong: var(--c-line-strong);
+  --color-ring: var(--c-ring);
+  --color-ring-soft: var(--c-ring-soft);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-accent-fg: var(--c-accent-fg);
+  --color-rev: var(--c-rev);
+  --color-rev-fg: var(--c-rev-fg);
+  --color-nav-ink: var(--c-nav-ink);
+  --color-badge-bg: var(--c-badge-bg);
+  --color-badge-fg: var(--c-badge-fg);
+  --color-ok: var(--c-ok);
+  --color-ok-bg: var(--c-ok-bg);
+  --color-ok-line: var(--c-ok-line);
+  --color-danger: var(--c-danger);
+  --color-danger-bg: var(--c-danger-bg);
+  --color-danger-line: var(--c-danger-line);
+  --color-warn: var(--c-warn);
+  --color-hover-row: var(--c-hover-row);
+  --color-chip: var(--c-chip);
+
+  --shadow-btn: 0 7px 18px rgba(0, 0, 0, 0.16);
+  --shadow-btn-ghost: 0 5px 14px rgba(0, 0, 0, 0.05);
+  --shadow-card-hover: 0 8px 26px rgba(0, 0, 0, 0.05);
+  --shadow-empty: 0 1px 2px rgba(16, 19, 24, 0.03);
+  --shadow-pop: 0 18px 46px rgba(0, 0, 0, 0.17);
+  --shadow-cal: 0 20px 50px rgba(0, 0, 0, 0.18);
+  --shadow-palette: 0 24px 60px rgba(16, 18, 22, 0.22);
+  --shadow-dialog: 0 24px 70px -18px rgba(16, 19, 24, 0.45), 0 0 0 1px rgba(16, 19, 24, 0.05);
+  --shadow-modal: 0 30px 80px rgba(0, 0, 0, 0.35);
+  --shadow-toast: 0 12px 34px rgba(0, 0, 0, 0.24);
+  --shadow-notif: 0 8px 22px -10px rgba(16, 19, 24, 0.3), 0 2px 6px -2px rgba(16, 19, 24, 0.1);
+  --shadow-fly: 14px 0 34px -18px rgba(16, 19, 24, 0.25);
+  --shadow-profile: 0 24px 54px -18px rgba(16, 19, 24, 0.42), 0 3px 10px -5px rgba(16, 19, 24, 0.18);
+  --shadow-bulk: 0 18px 50px rgba(16, 19, 24, 0.18);
+
+  --ease-erp: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --ease-acordeon: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-muelle: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --animate-pop: pop 0.15s ease;
+  --animate-fade-in: fadeIn 0.16s ease;
+  --animate-fade-up: fadeUp 0.34s var(--ease-erp);
+  --animate-erp-in: erpIn 0.22s var(--ease-erp) both;
+  --animate-erp-out: erpOut 0.18s ease forwards;
+  --animate-dlg-in: dlgIn 0.2s var(--ease-erp);
+  --animate-gs-in: gsIn 0.16s var(--ease-erp);
+  --animate-slide-in: slideIn 0.2s var(--ease-erp);
+  --animate-drawer-in: drawerIn 0.22s var(--ease-erp);
+  --animate-bell: bellPulse 0.55s ease;
+  --animate-perfil-in: perfilIn 0.28s var(--ease-muelle);
+  --animate-toast-in: toastIn 0.2s var(--ease-erp);
 }
 
-html,
-body,
-#root {
-  height: 100%;
+@keyframes pop {
+  0% {
+    transform: scale(0.97);
+  }
+  55% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
-body {
-  background: var(--c-bg);
-  color: var(--c-ink);
-  @apply font-sans antialiased;
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes erpIn {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes erpOut {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+}
+@keyframes dlgIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes gsIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes drawerIn {
+  from {
+    transform: translateX(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes bellPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.4);
+  }
+}
+
+@keyframes perfilIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.93);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Escalonado de grupos de tarjetas/filas (.erp-in-stg del ERP). */
+@utility erp-in-stg {
+  & > * {
+    animation: erpIn 0.22s var(--ease-erp) both;
+  }
+  & > :nth-child(2) {
+    animation-delay: 0.03s;
+  }
+  & > :nth-child(3) {
+    animation-delay: 0.06s;
+  }
+  & > :nth-child(4) {
+    animation-delay: 0.09s;
+  }
+  & > :nth-child(5) {
+    animation-delay: 0.12s;
+  }
+  & > :nth-child(n + 6) {
+    animation-delay: 0.15s;
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--c-bg);
+    color: var(--c-ink);
+    font-size: 14px;
+    line-height: 1.5;
+    letter-spacing: -0.1px;
+    @apply font-sans antialiased;
+  }
+  ::selection {
+    background: #e4e5e8;
+    color: #0f1216;
+  }
+  .dark ::selection {
+    background: #3a3d44;
+    color: #f5f7fa;
+  }
+  /* Barra de desplazamiento fina, como en el ERP. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--c-scroll) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--c-scroll);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--c-scroll-hover);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /* El ratón no pinta anillo; el teclado sí (los campos lo cambian por borde). */
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--c-ring);
+    outline-offset: 2px;
+  }
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: var(--c-accent);
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+}
+
+/* Quien pide menos movimiento no ve entradas, rebotes ni acordeones animados. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

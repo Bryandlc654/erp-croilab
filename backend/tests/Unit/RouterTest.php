@@ -56,4 +56,16 @@ class RouterTest extends TestCase
             $this->assertSame(['GET', 'POST'], $e->extra['permitidos']);
         }
     }
+
+    public function testSoloLasRutasConTokenVanSinCsrf(): void
+    {
+        $r = $this->router();
+        $r->postConToken('/v1/mcp', fn() => 'mcp');
+        [, $publica, $csrf] = $r->resolver(new Request('POST', '/v1/mcp'));
+        $this->assertTrue($publica);
+        $this->assertFalse($csrf);
+        // Las demás, públicas o no, siguen pidiendo CSRF.
+        $this->assertTrue($r->resolver(new Request('POST', '/v1/auth/login'))[2]);
+        $this->assertTrue($r->resolver(new Request('POST', '/v1/tareas'))[2]);
+    }
 }

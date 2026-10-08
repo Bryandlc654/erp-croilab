@@ -28,11 +28,14 @@ export function conQuery(path: string, params: Record<string, string | number | 
 export class ApiError extends Error {
   readonly status: number
   readonly codigo: string | null
-  constructor(status: number, msg: string, codigo: string | null = null) {
+  /* Campo del formulario al que se refiere un 422 (`campo` de la respuesta), si lo hay. */
+  readonly campo: string | null
+  constructor(status: number, msg: string, codigo: string | null = null, campo: string | null = null) {
     super(msg)
     this.name = 'ApiError'
     this.status = status
     this.codigo = codigo
+    this.campo = campo
   }
 }
 
@@ -112,7 +115,8 @@ export async function api<S extends z.ZodType>(path: string, { method = 'GET', b
   if (!r.ok || !esObjeto(j) || j.ok === false) {
     const msg = esObjeto(j) && typeof j.msg === 'string' && j.msg ? j.msg : `No se ha podido contactar con el servidor (${r.status}).`
     const codigo = esObjeto(j) && typeof j.error === 'string' ? j.error : null
-    throw new ApiError(r.status, msg, codigo)
+    const campo = esObjeto(j) && typeof j.campo === 'string' && j.campo ? j.campo : null
+    throw new ApiError(r.status, msg, codigo, campo)
   }
 
   const res = schema.safeParse(j)

@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import { url } from '../api/client'
 import { colorDe, iniciales } from '../lib/avatar'
 
@@ -9,9 +10,10 @@ type Props = {
   /* Persona: círculo. Cliente: cuadrado redondeado. */
   forma?: 'circulo' | 'cuadrado'
   className?: string
+  style?: CSSProperties
 }
 
-export default function Avatar({ nombre, inicialesGuardadas, foto, size = 24, forma = 'circulo', className = '' }: Props) {
+export default function Avatar({ nombre, inicialesGuardadas, foto, size = 24, forma = 'circulo', className = '', style }: Props) {
   const radio = forma === 'circulo' ? '9999px' : `${Math.round(size * 0.29)}px`
   return (
     <span
@@ -24,6 +26,7 @@ export default function Avatar({ nombre, inicialesGuardadas, foto, size = 24, fo
         fontSize: Math.max(9, Math.round(size * 0.42)),
         backgroundColor: colorDe(nombre),
         backgroundImage: foto ? `url("${url('/' + foto)}")` : undefined,
+        ...style,
       }}
     >
       {foto ? null : iniciales(nombre, inicialesGuardadas)}

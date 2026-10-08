@@ -27,6 +27,9 @@ export default defineConfig(({ mode }) => {
       setupFiles: ['./src/test/setup.ts'],
       css: false,
       restoreMocks: true,
+      // Las pruebas llaman a la API por rutas relativas: el VITE_API_URL del
+      // .env de despliegue las convertiría en absolutas y no casarían con los mocks.
+      env: { VITE_API_URL: '' },
     },
   }
 })

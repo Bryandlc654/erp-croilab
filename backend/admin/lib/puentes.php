@@ -184,102 +184,24 @@ function pu_lead_a_cliente($contactId, $dealId = 0) {
 }
 
 /* ---------------------------------------------------------------------------
-   2) NEGOCIO GANADO  ->  FACTURA (borrador)
-   --------------------------------------------------------------------------- */
-
-/* Crea una factura en borrador con el importe, el cliente y el servicio del
-   negocio. Se deja SIEMPRE en borrador: la factura es un documento legal y
-   quien la emite tiene que repasarla antes. Devuelve el id de la factura. */
+   2) NEGOCIO GANADO  ->  FACTURA
+   ---------------------------------------------------------------------------
+   Aquí ya NO se crea ninguna factura. Antes se numeraba un borrador con
+   fin_next_numero() desde el CRM (consumía numeración de la serie). Ahora la
+   hace Finanzas: el CRM navega a /finanzas/facturas/nueva?negocio=<id>,
+   Finanzas prellena el borrador (GET /v1/finanzas/facturas/desde-negocio/{id})
+   y guarda el vínculo en invoices.deal_id. Esta función queda solo por si algún
+   código antiguo la llamara: devuelve la factura ya vinculada, si la hay, y
+   nunca escribe. El código nuevo no la usa. */
 function pu_negocio_a_factura($dealId) {
-  ensure_puentes_schema();
-  prog_ensure();
   $dealId = (int)$dealId;
   if (!$dealId) return ['ok'=>false, 'msg'=>'Negocio no válido.'];
-
   try {
-    $q = db()->prepare('SELECT d.*, c.nombre c_nombre, c.empresa c_empresa, c.email c_email, c.telefono c_tel, c.client_id c_client
-                        FROM deals d JOIN contacts c ON c.id=d.contact_id WHERE d.id=?');
-    $q->execute([$dealId]); $d = $q->fetch();
-  } catch (Exception $e) { $d = null; }
-  if (!$d) return ['ok'=>false, 'msg'=>'Ese negocio ya no existe.'];
-
-  /* Si ya se le hizo factura, se abre esa en vez de crear otra. */
-  $yaInv = (int)($d['invoice_id'] ?? 0);
-  if ($yaInv) {
-    $ex = db()->prepare('SELECT id,numero FROM invoices WHERE id=?'); $ex->execute([$yaInv]); $ex = $ex->fetch();
-    if ($ex) return ['ok'=>true, 'id'=>(int)$ex['id'], 'ya'=>true, 'msg'=>'Este negocio ya tenía la factura ' . $ex['numero'] . '.'];
-  }
-
-  $clientId = (int)($d['client_id'] ?: $d['c_client']);
-  $cli = [];
-  if ($clientId) {
-    $cq = db()->prepare('SELECT * FROM clients WHERE id=?'); $cq->execute([$clientId]); $cli = $cq->fetch() ?: [];
-  }
-  $bq = db()->prepare('SELECT * FROM billing_data WHERE contact_id=?'); $bq->execute([(int)$d['contact_id']]);
-  $b = $bq->fetch() ?: [];
-
-  /* Los datos fiscales se buscan en este orden: ficha del cliente -> datos de
-     facturación del lead -> lo poco que haya en el contacto. */
-  $nom  = trim((string)($cli['fact_nombre'] ?? '')) ?: (trim((string)($b['razon_social'] ?? '')) ?: (trim((string)$d['c_empresa']) ?: (string)$d['c_nombre']));
-  $nif  = trim((string)($cli['fact_nif'] ?? ''))    ?: trim((string)($b['cif'] ?? ''));
-  $dir  = trim((string)($cli['fact_dir'] ?? ''))    ?: pu_dir($b);
-  $mail = trim((string)($cli['fact_email'] ?? ''))  ?: (trim((string)($b['email_facturacion'] ?? '')) ?: (string)$d['c_email']);
-  $tel  = trim((string)($cli['fact_tel'] ?? ''))    ?: (string)$d['c_tel'];
-
-  /* El emisor ya no va codificado a «victor» (P2-09): sale del ajuste de emisor por
-     defecto, y como la factura nace en BORRADOR quien la emite puede cambiarlo antes
-     de mandarla. (deals/clients no guardan emisor propio, así que no hay de dónde
-     tomarlo por registro.) */
-  $emisor = (function_exists('get_setting') ? (string)get_setting('emisor_por_defecto','') : '');
-  /* fin_emisor_ok() acepta cualquier emisor de la lista de Ajustes y cae al
-     primero si el ajuste está vacío o apunta a alguien que ya no está. Antes
-     esta línea convertía en «Víctor» a cualquiera que no fuese «Gabi», así que
-     un tercer autónomo puesto como emisor por defecto se perdía aquí. */
-  $emisor = fin_emisor_ok($emisor);
-  $em = fin_emisor_data($emisor);
-  $serie = '';
-  try { $s = db()->prepare('SELECT valor FROM settings WHERE clave=?'); $s->execute(['serie_' . $emisor]); $serie = (string)($s->fetchColumn() ?: ''); } catch (Exception $e) {}
-
-  $f = [
-    'numero'         => fin_next_numero($serie, $emisor, date('Y-m-d')),
-    'emisor'         => $emisor,
-    'client_id'      => $clientId ?: null,
-    'cliente_nombre' => $nom,
-    'cliente_nif'    => $nif,
-    'cliente_dir'    => $dir,
-    'cliente_email'  => $mail,
-    'cliente_tel'    => $tel,
-    'fecha'          => date('Y-m-d'),
-    'cond_pago'      => $em['venc'],
-    'estado'         => 'borrador',
-    'iva_pct'        => (float)$em['iva'],
-    'irpf_pct'       => (float)$em['irpf'],
-    'notas'          => '',
-    'emisor_json'    => json_encode($em, JSON_UNESCAPED_UNICODE),
-  ];
-
-  try {
-    $cols = implode(',', array_keys($f));
-    $ph   = implode(',', array_map(fn($k) => ":$k", array_keys($f)));
-    db()->prepare("INSERT INTO invoices ($cols) VALUES ($ph)")->execute($f);
-    $invId = (int)db()->lastInsertId();
-  } catch (Exception $e) {
-    return ['ok'=>false, 'msg'=>'No se ha podido crear la factura: ' . $e->getMessage()];
-  }
-
-  /* Una línea con el negocio. El importe del negocio es la base imponible. */
-  $concepto = trim((string)($d['nombre'] ?? '')) ?: 'Servicios';
-  if (!empty($d['servicio']) && stripos($concepto, (string)$d['servicio']) === false) $concepto .= ' · ' . $d['servicio'];
-  try {
-    db()->prepare('INSERT INTO invoice_items (invoice_id,concepto,cantidad,precio) VALUES (?,?,?,?)')
-      ->execute([$invId, mb_substr($concepto, 0, 300), 1, (float)($d['valor'] ?? 0)]);
+    $q = db()->prepare('SELECT id, numero FROM invoices WHERE deal_id=? ORDER BY id DESC LIMIT 1');
+    $q->execute([$dealId]);
+    if ($f = $q->fetch()) return ['ok'=>true, 'id'=>(int)$f['id'], 'ya'=>true, 'msg'=>'Este negocio ya tiene la factura ' . $f['numero'] . '.'];
   } catch (Exception $e) {}
-
-  try { db()->prepare('UPDATE deals SET invoice_id=? WHERE id=?')->execute([$invId, $dealId]); } catch (Exception $e) {}
-  if (function_exists('crm_activity')) crm_activity((int)$d['contact_id'], $dealId, 'factura', 'Factura ' . $f['numero'] . ' generada desde el negocio');
-
-  return ['ok'=>true, 'id'=>$invId, 'numero'=>$f['numero'], 'ya'=>false,
-          'msg'=>'Factura ' . $f['numero'] . ' creada en borrador.'];
+  return ['ok'=>false, 'msg'=>'Las facturas de un negocio se crean desde Finanzas (/finanzas/facturas/nueva?negocio=' . $dealId . ').'];
 }
 
 /* ---------------------------------------------------------------------------

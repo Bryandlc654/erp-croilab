@@ -30,6 +30,7 @@ try {
     require_once __DIR__ . '/../admin/lib/tareas_lib.php';
     require_once __DIR__ . '/../admin/lib/papelera.php';
     require_once __DIR__ . '/../admin/lib/login_throttle.php';
+    require_once __DIR__ . '/../admin/lib/notificaciones.php';
 
     $router = new Router();
     (require __DIR__ . '/rutas.php')($router, db());

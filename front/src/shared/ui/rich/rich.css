@@ -1,0 +1,392 @@
+/* Estilos de CONTENIDO del texto enriquecido (rt_editor.php §2.B): los mismos
+   para la vista (RichTextView) y para el editor (TipTap), así lo que se
+   escribe se ve igual que lo que se lee. Solo tokens de index.css.
+   Va en @layer components: las clases de Tailwind (text-[13.5px]…) pueden
+   cambiarlo desde fuera. */
+
+@layer components {
+  .rt-content {
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    color: var(--c-ink);
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .rt-content p,
+  .rt-content .rt-p {
+    margin: 0;
+    min-height: 1.6em;
+  }
+  .rt-content b,
+  .rt-content strong {
+    font-weight: 700;
+  }
+  .rt-content i,
+  .rt-content em {
+    font-style: italic;
+  }
+  .rt-content u {
+    text-decoration: underline;
+  }
+  .rt-content s {
+    text-decoration: line-through;
+  }
+  .rt-content h1 {
+    font-size: 1.5em;
+    font-weight: 750;
+    line-height: 1.25;
+    margin: 0.5em 0 0.2em;
+    color: var(--c-ink-strong);
+  }
+  .rt-content h2 {
+    font-size: 1.28em;
+    font-weight: 700;
+    line-height: 1.3;
+    margin: 0.5em 0 0.2em;
+    color: var(--c-ink-strong);
+  }
+  .rt-content h3 {
+    font-size: 1.1em;
+    font-weight: 700;
+    margin: 0.4em 0 0.15em;
+    color: var(--c-ink-strong);
+  }
+  .rt-content > :first-child {
+    margin-top: 0;
+  }
+  .rt-content ul,
+  .rt-content ol {
+    margin: 0.25em 0;
+    padding-left: 1.5em;
+  }
+  .rt-content ul {
+    list-style: disc;
+  }
+  .rt-content ol {
+    list-style: decimal;
+  }
+  .rt-content li {
+    margin: 2px 0;
+  }
+  .rt-content li > p {
+    min-height: 0;
+  }
+  .rt-content blockquote {
+    border-left: 3px solid #d7dae0;
+    margin: 0.45em 0;
+    padding: 2px 0 2px 13px;
+    color: #5c616b;
+  }
+  .rt-content pre {
+    background: #f6f7f9;
+    border: 1px solid var(--c-line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 0.45em 0;
+    overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.86em;
+    white-space: pre;
+    color: var(--c-ink);
+  }
+  .rt-content code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.86em;
+    background: #f3f3f5;
+    border: 1px solid #e6e7ea;
+    border-radius: 6px;
+    padding: 1px 6px;
+    color: #c0343a;
+    white-space: break-spaces;
+  }
+  .rt-content pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    white-space: pre;
+    font-size: 1em;
+  }
+  .rt-content a {
+    color: #0071e3;
+    text-decoration: none;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .rt-content a:hover {
+    text-decoration: underline;
+  }
+  .rt-content hr {
+    border: none;
+    border-top: 1px solid var(--c-line);
+    margin: 0.7em 0;
+  }
+  .rt-content .rt-tablewrap,
+  .rt-content .tableWrapper {
+    overflow-x: auto;
+    margin: 0.45em 0;
+  }
+  .rt-content table {
+    border-collapse: collapse;
+    font-size: 0.94em;
+    min-width: 200px;
+  }
+  .rt-content th,
+  .rt-content td {
+    border: 1px solid var(--c-line);
+    padding: 5px 9px;
+    text-align: left;
+    vertical-align: top;
+    min-width: 60px;
+  }
+  .rt-content th {
+    background: var(--c-soft);
+    font-weight: 650;
+  }
+  .rt-content th p,
+  .rt-content td p {
+    min-height: 1.4em;
+  }
+
+  /* Lista de control al leer (.rt-chk) */
+  .rt-content .rt-chk {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin: 2px 0;
+  }
+  .rt-content .rt-cbox {
+    width: 16px;
+    height: 16px;
+    margin-top: 3px;
+    flex: none;
+    border: 1.5px solid var(--c-line-strong);
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 13px;
+    text-align: center;
+    color: var(--c-ok);
+    background: var(--c-card);
+  }
+  button.rt-cbox {
+    cursor: pointer;
+    padding: 0;
+  }
+  button.rt-cbox:hover {
+    border-color: var(--c-label);
+  }
+  .rt-content .rt-chk.done {
+    color: var(--c-muted);
+    text-decoration: line-through;
+  }
+  .rt-content .rt-chk.done .rt-cbox {
+    background: #e7f7ee;
+    border-color: #bfe6cf;
+  }
+
+  /* Lista de control en el editor (TaskList de TipTap) */
+  .rt-content ul[data-type='taskList'] {
+    list-style: none;
+    padding-left: 0;
+  }
+  .rt-content ul[data-type='taskList'] > li {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    margin: 4px 0;
+  }
+  .rt-content ul[data-type='taskList'] > li > label {
+    flex: none;
+    margin-top: 3px;
+    user-select: none;
+  }
+  .rt-content ul[data-type='taskList'] > li > label input {
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+    accent-color: var(--c-accent);
+  }
+  .rt-content ul[data-type='taskList'] > li > div {
+    flex: 1;
+    min-width: 0;
+  }
+  .rt-content ul[data-type='taskList'] > li[data-checked='true'] > div {
+    color: var(--c-muted);
+    text-decoration: line-through;
+  }
+
+  /* Menciones */
+  .rt-content .rt-mention {
+    color: #5b5fc7;
+    font-weight: 600;
+    background: rgba(91, 95, 199, 0.1);
+    border-radius: 6px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  .rt-content .rt-mention-av {
+    display: inline-flex;
+    width: 17px;
+    height: 17px;
+    margin-right: 4px;
+    vertical-align: -3px;
+    border-radius: 50%;
+    color: #fff;
+    align-items: center;
+    justify-content: center;
+    font-size: 7.5px;
+    font-weight: 700;
+    background-size: cover;
+  }
+
+  /* Adjuntos dentro del texto: [[img:…]] y [[file:…]] */
+  .rt-content img.rt-img {
+    display: block;
+    min-width: 180px;
+    min-height: 110px;
+    max-width: min(100%, 440px);
+    max-height: 360px;
+    object-fit: contain;
+    border-radius: 10px;
+    border: 1px solid var(--c-line);
+    margin: 8px 0;
+    cursor: zoom-in;
+  }
+  .rt-content .rt-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--c-soft);
+    border: 1px solid var(--c-line);
+    border-radius: 8px;
+    padding: 3px 9px;
+    margin: 2px 4px 2px 0;
+    font-size: 12.5px;
+    vertical-align: middle;
+    color: var(--c-ink);
+    font-weight: 500;
+  }
+  .rt-content a.rt-file:hover {
+    text-decoration: none;
+    border-color: var(--c-line-strong);
+  }
+  .rt-content .rt-img-slot {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--c-muted);
+    font-size: 12.5px;
+  }
+
+  /* Editor (ProseMirror) */
+  .rt-content.ProseMirror {
+    outline: none;
+    white-space: pre-wrap;
+  }
+  .rt-content.ProseMirror p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: var(--c-label);
+    float: left;
+    height: 0;
+    pointer-events: none;
+  }
+  .rt-content.ProseMirror .selectedCell::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(59, 130, 246, 0.12);
+    pointer-events: none;
+  }
+  .rt-content.ProseMirror th,
+  .rt-content.ProseMirror td {
+    position: relative;
+  }
+  .rt-content.ProseMirror .ProseMirror-selectednode {
+    outline: 2px solid #3b82f6;
+    outline-offset: 1px;
+    border-radius: 6px;
+  }
+
+  /* Modo oscuro: solo se reasignan los colores que no son tokens. */
+  .dark .rt-content blockquote {
+    border-left-color: var(--c-line-strong);
+    color: var(--c-muted);
+  }
+  .dark .rt-content pre {
+    background: var(--c-soft);
+  }
+  .dark .rt-content code {
+    background: var(--c-soft);
+    border-color: var(--c-line);
+    color: #f08d82;
+  }
+  .dark .rt-content pre code {
+    background: none;
+    color: inherit;
+  }
+  .dark .rt-content a {
+    color: #4da3ff;
+  }
+  .dark .rt-content .rt-chk.done .rt-cbox {
+    background: var(--c-ok-bg);
+    border-color: var(--c-ok-line);
+  }
+  .dark .rt-content .rt-mention {
+    color: #a9abf3;
+    background: rgba(140, 143, 240, 0.16);
+  }
+}
+
+/* Animaciones del kit (fuera de la capa: no compiten con nada). */
+:root {
+  --rt-flash-ok: #eafaf0;
+  --rt-flash-cita: #fff6db;
+  --rt-flash-enlace: #e9f2ff;
+}
+.dark {
+  --rt-flash-ok: #14251c;
+  --rt-flash-cita: #3a3220;
+  --rt-flash-enlace: #17263d;
+}
+@keyframes lbIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Destello de un elemento recién marcado de la lista de control. */
+@keyframes chkFlash {
+  0% {
+    background-color: var(--rt-flash-ok);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+/* Rebote de una reacción nueva. */
+@keyframes rpop {
+  0% {
+    transform: scale(0.72);
+  }
+  55% {
+    transform: scale(1.24);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+/* Destello del comentario al que lleva una cita de respuesta. */
+@keyframes cmFlash {
+  0%,
+  100% {
+    background-color: var(--c-card);
+  }
+  25% {
+    background-color: var(--rt-flash-cita);
+  }
+}

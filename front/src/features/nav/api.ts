@@ -17,6 +17,17 @@ export function useNav() {
   })
 }
 
+/* Los mismos contadores, pero refrescándose cada 5 s mientras la pestaña
+   está visible (como el sondeo de avisos del ERP): la campana del raíl se
+   entera de los avisos nuevos sin recargar. Comparte caché con useNav. */
+export function useSondeoNav() {
+  return useQuery({
+    queryKey: clavesNav.nav,
+    queryFn: ({ signal }) => api('/api/v1/nav', { schema: NavSchema, signal }),
+    refetchInterval: 5000,
+  })
+}
+
 // Fuera del hook: un select estable no se vuelve a ejecutar en cada render.
 const soloItems = (d: z.infer<typeof EquipoRespuesta>) => d.items
 

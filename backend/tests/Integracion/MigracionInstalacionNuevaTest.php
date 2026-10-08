@@ -56,4 +56,35 @@ class MigracionInstalacionNuevaTest extends BaseDatosTestCase
             rmdir($dir);
         }
     }
+
+    /* Producción (Hostinger): se despliega una migración nueva, la web ve
+       «faltan migraciones» y responde 503; después se migra desde la consola,
+       que guarda su caché en OTRA carpeta temporal. La web no puede seguir
+       creyendo que faltan: el 503 no se iría nunca. El despliegue se simula
+       cambiando la fecha del fichero (cambia la huella) y la migración del
+       otro proceso, anotando la versión a mano. */
+    public function testTrasMigrarDesdeOtroProcesoLaApiDejaDeResponder503(): void
+    {
+        $pdo = self::pdo();
+        $archivos = Migrador::archivos();
+        $ultima = (string)array_key_last($archivos);
+        $ruta = $archivos[$ultima];
+        $mtime = filemtime($ruta);
+        $fila = $pdo->query("SELECT version, nombre FROM schema_migrations WHERE version = '$ultima'")->fetch(\PDO::FETCH_ASSOC);
+        $pdo->exec("DELETE FROM schema_migrations WHERE version = '$ultima'");
+        try {
+            touch($ruta, $mtime + 60);   // «se ha subido» la migración
+            Migrador::olvidar();
+            $this->assertTrue(Migrador::hayPendientes($pdo), 'recién desplegada, falta esa migración');
+        } finally {
+            $pdo->prepare('INSERT INTO schema_migrations (version, nombre) VALUES (?, ?)')->execute([$fila['version'], $fila['nombre']]);
+        }
+        try {
+            Migrador::olvidar();   // la siguiente petición, en otro proceso
+            $this->assertFalse(Migrador::hayPendientes($pdo), 'ya migrada desde la consola: la API vuelve a responder');
+        } finally {
+            touch($ruta, $mtime);
+            clearstatcache(true, $ruta);
+        }
+    }
 }

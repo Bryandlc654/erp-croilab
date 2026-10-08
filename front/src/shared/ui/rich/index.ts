@@ -1,0 +1,22 @@
+/* Kit de contenido enriquecido (00-estilo-ui.md §5.2, componentes 39-46, 48 y 49).
+   Lo pesado (TipTap, emojis, Chart.js) se carga bajo demanda dentro de cada
+   componente: importar desde aquí no lo mete en el bundle principal. */
+export { default as RichTextEditor } from './RichTextEditor'
+export { default as RichTextView, type RichTextViewProps } from './RichTextView'
+export { BARRA_COMENTARIO, BARRA_DOC, type ArchivoSubido, type HerramientaRT, type RichTextEditorHandle, type RichTextEditorProps } from './richTextTipos'
+export { default as MentionPopover } from './MentionPopover'
+export { useMentions } from './useMentions'
+export { default as EmojiPicker, EmojiButton } from './EmojiPicker'
+export { useEmojiShortcut } from './useEmojiShortcut'
+export { default as FileDropzone, WindowDropOverlay } from './FileDropzone'
+export { useWindowFileDrop } from './useWindowFileDrop'
+export { AttachmentChip, AttachmentList, Lightbox, type Adjunto } from './Adjuntos'
+export { default as CommentThread, type CommentThreadProps } from './CommentThread'
+export { default as CommentComposer, type CommentComposerProps } from './CommentComposer'
+export { default as ReactionChips, QuickReactions, type Reaccion } from './ReactionChips'
+export type { Comentario, EnvioComentario, EventoActividad, IdComentario } from './comentariosTipos'
+export { default as ActivityTimeline, type ItemActividad } from './ActivityTimeline'
+export { default as Checklist, type ChecklistProps } from './Checklist'
+export { default as KanbanBoard, KanbanCard, KanbanColumn, type KanbanBoardProps, type KanbanColumnData } from './Kanban'
+export { default as ChartCard, ChartGrid, type ChartCardProps } from './ChartCard'
+export { PALETA, type DatosGrafica, type SerieGrafica, type TipoGrafica } from './charts'

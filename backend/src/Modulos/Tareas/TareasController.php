@@ -20,13 +20,14 @@ class TareasController
             'list' => $req->entero('list'),
             'fe' => $req->texto('fe'),
             'fr' => $req->entero('fr'),
+            'mes' => $req->texto('mes'),
         ], $limit, $offset);
         return ['items' => $items, 'total' => $total, 'limit' => $limit, 'offset' => $offset, 'list_id' => $listId ?: null];
     }
 
-    public function ver(Request $req): array
+    public function meses(Request $req): array
     {
-        return ['tarea' => $this->servicio->detalle(Acceso::actual(), $req->param('id'))];
+        return ['items' => $this->servicio->meses(Acceso::actual(), $req->entero('cli'), $req->entero('list'))];
     }
 
     public function crear(Request $req): Respuesta
@@ -39,13 +40,15 @@ class TareasController
         return ['tarea' => $this->servicio->actualizar(Acceso::actual(), $req->param('id'), $req->json())];
     }
 
+    public function reordenar(Request $req): array
+    {
+        $d = $req->json();
+        $this->servicio->reordenar(Acceso::actual(), (int)($d['list_id'] ?? 0), is_array($d['ids'] ?? null) ? $d['ids'] : []);
+        return [];
+    }
+
     public function borrar(Request $req): array
     {
         return ['papelera_id' => $this->servicio->borrar(Acceso::actual(), $req->param('id'))];
-    }
-
-    public function restaurar(Request $req): array
-    {
-        return ['id' => $this->servicio->restaurar(Acceso::actual(), $req->param('id'))];
     }
 }

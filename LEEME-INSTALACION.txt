@@ -115,6 +115,12 @@ balanceador:
 
 Tarea programada (cron)
 -----------------------
-Las facturas recurrentes y los avisos del CRM dependían de admin/cron.php, que
-se eliminó con el panel antiguo. Hasta que esos módulos se pasen a la API no hay
-cron que configurar.
+Facturas recurrentes y vencidas, seguimientos y resumen diario del CRM, avisos
+(leads, reuniones, cumpleaños), purga de la papelera y limpieza del chat los
+hace bin/cron.php. En hPanel → Avanzado → Cron jobs, cada 15 minutos:
+
+     php /home/USUARIO/RUTA/backend/bin/cron.php
+
+Repetirlo no duplica nada (cada tarea sabe si ya le tocaba) y dos ciclos no se
+solapan. Cada vuelta queda apuntada en la tabla cron_log, que se ve en
+CRM › Reporting. Con «php bin/cron.php crm finanzas» se lanzan solo esos módulos.

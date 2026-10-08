@@ -113,7 +113,8 @@ TareaDetalle = Tarea & {
 }
 ```
 
-`descripcion` y `cuerpo` son HTML del editor del ERP: mostrar como texto, nunca inyectar.
+`descripcion`, `descripcion_rich` y `cuerpo` usan el formato de texto del ERP (markdown-like, no
+HTML): se pintan con `RichTextView` del front, nunca se inyectan como HTML.
 
 ## Permisos
 
@@ -121,3 +122,21 @@ TareaDetalle = Tarea & {
   Las tres últimas requieren además `general.editar`. Crear la lista de informes: `tareas.crear`.
 - Restaurar lo que borró otra persona: `papelera.restaurar` (lo propio se puede deshacer siempre).
 - Sin `alcance.todos`, cada persona solo ve las tareas de las que es responsable o asignada y los clientes de esas tareas.
+
+## API de cada módulo
+
+Cada módulo documenta sus endpoints, cuerpos, respuestas y permisos en su fichero
+(las rutas del front están en `docs/migracion/RUTAS.md`):
+
+| Módulo | Prefijos | Documentación |
+|---|---|---|
+| Trabajo | `/v1/tareas…`, `/v1/inicio`, `/v1/notificaciones…`, `/v1/buscar`, `/v1/papelera…`, `/v1/actas…` | [docs/migracion/api/trabajo.md](../docs/migracion/api/trabajo.md) |
+| Clientes | `/v1/clientes…` | [docs/migracion/api/clientes.md](../docs/migracion/api/clientes.md) |
+| CRM | `/v1/crm/…` | [docs/migracion/api/crm.md](../docs/migracion/api/crm.md) |
+| Finanzas | `/v1/finanzas/…` | [docs/migracion/api/finanzas.md](../docs/migracion/api/finanzas.md) |
+| Equipo y ajustes | `/v1/equipo…`, `/v1/registro`, `/v1/perfiles…`, `/v1/me/…`, `/v1/roles…`, `/v1/ajustes/…`, `/v1/integraciones…`, `/v1/credenciales…` | [docs/migracion/api/equipo.md](../docs/migracion/api/equipo.md) |
+| Comunicación | `/v1/chat/…`, `/v1/presencia`, `/v1/soporte/…`, `/v1/calendario…`, `/v1/reuniones…`, `/v1/mcp` | [docs/migracion/api/comunicacion.md](../docs/migracion/api/comunicacion.md) |
+
+`POST /v1/mcp` es la única ruta sin CSRF: se autentica con su token (`?k=`) y no usa la sesión
+(`Router::postConToken`).
+

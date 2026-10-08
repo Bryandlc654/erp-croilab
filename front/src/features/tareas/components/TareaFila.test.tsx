@@ -26,8 +26,8 @@ describe('<TareaFila>', () => {
     expect(screen.getByRole('button', { name: 'Persona asignada' })).toBeDisabled()
     expect(screen.getByLabelText('Fecha límite')).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Borrar Preparar informe' })).not.toBeInTheDocument()
-    // Abrir el detalle sigue disponible.
-    expect(screen.getByRole('button', { name: 'Abrir Preparar informe' })).toBeEnabled()
+    // La vista rápida sigue disponible.
+    expect(screen.getByRole('button', { name: 'Vista rápida de Preparar informe' })).toBeEnabled()
   })
 
   it('con permisos elegir una prioridad llama a onCampo con el valor como texto', async () => {
@@ -49,6 +49,27 @@ describe('<TareaFila>', () => {
     const { t, onBorrar } = pintar({ puedeEditar: true, puedeBorrar: true })
     await user.click(screen.getByRole('button', { name: 'Borrar Preparar informe' }))
     expect(onBorrar).toHaveBeenCalledWith(t)
+  })
+
+  it('asignar a varias personas manda los ids separados por comas', async () => {
+    const user = userEvent.setup()
+    const { t, onCampo } = pintar({ puedeEditar: true, puedeBorrar: false })
+    await user.click(screen.getByRole('button', { name: 'Persona asignada' }))
+    await user.click(screen.getByRole('option', { name: /bdelacruz654/ }))
+    expect(onCampo).toHaveBeenCalledWith(t, 'asignados', '1,2')
+  })
+
+  it('clic en la fila abre la ficha; la lupa, la vista rápida', async () => {
+    const user = userEvent.setup()
+    const onAbrir = vi.fn()
+    const onVistaRapida = vi.fn()
+    const t = tarea({ id: 9, titulo: 'Fila' })
+    render(<TareaFila t={t} equipo={equipo} mostrarLista={false} puedeEditar={false} puedeBorrar={false} onCampo={vi.fn()} onAbrir={onAbrir} onBorrar={vi.fn()} onVistaRapida={onVistaRapida} />)
+    await user.click(screen.getByText('Fila'))
+    expect(onAbrir).toHaveBeenCalledWith(t)
+    await user.click(screen.getByRole('button', { name: 'Vista rápida de Fila' }))
+    expect(onVistaRapida).toHaveBeenCalledWith(t)
+    expect(onAbrir).toHaveBeenCalledTimes(1)
   })
 
   it('volver a elegir la prioridad actual no manda nada', async () => {

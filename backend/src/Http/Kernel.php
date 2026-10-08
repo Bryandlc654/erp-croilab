@@ -23,8 +23,8 @@ class Kernel
             if (Migrador::hayPendientes(db())) {
                 throw new HttpError(503, 'El servidor se está actualizando. Inténtalo en unos minutos.', 'mantenimiento');
             }
-            [$accion, $publica] = $this->router->resolver($req);
-            if (in_array($req->metodo, self::METODOS_CON_CSRF, true) && !csrf_valid()) throw HttpError::csrf();
+            [$accion, $publica, $conCsrf] = $this->router->resolver($req);
+            if ($conCsrf && in_array($req->metodo, self::METODOS_CON_CSRF, true) && !csrf_valid()) throw HttpError::csrf();
             if (!$publica && !current_admin()) throw HttpError::sesion();
 
             $r = $accion($req);

@@ -15,4 +15,9 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // Los ficheros de rutas de cada módulo exportan datos (la lista de rutas), no componentes.
+    files: ['src/features/*/rutas.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
 ])

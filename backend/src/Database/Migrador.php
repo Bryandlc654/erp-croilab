@@ -60,15 +60,22 @@ class Migrador
      * base. Si al desplegar se sube una migración nueva, la huella cambia y se
      * vuelve a preguntar. Fichero ilegible o no escribible: se cae a consultar,
      * que es el comportamiento de siempre.
+     *
+     * Solo se recuerda «al día», nunca «faltan»: las migraciones se aplican
+     * desde la consola (bin/migrate.php), que en Hostinger usa otra carpeta
+     * temporal que la web y no puede corregir su caché. Si la web recordara
+     * «faltan», seguiría respondiendo 503 después de migrar, hasta el siguiente
+     * despliegue. Mientras falten, cada petición pregunta a la base: es solo
+     * durante el mantenimiento.
      */
     public static function hayPendientes(PDO $pdo, string $dir = self::DIR): bool
     {
-        if (self::$pendientes !== null) return self::$pendientes;
-
-        /* Un directorio distinto es un caso de los tests: nunca se cachea. */
+        /* Un directorio distinto es un caso de los tests: nunca se cachea (ni
+           se mira la memoria del proceso, que es la del directorio real). */
         if ($dir !== self::DIR) {
             return (bool)array_diff(array_keys(self::archivos($dir)), self::aplicadas($pdo));
         }
+        if (self::$pendientes !== null) return self::$pendientes;
 
         $base = self::nombreBase($pdo);
         $fichero = self::ficheroCache($base);
@@ -78,15 +85,15 @@ class Migrador
             $guardado = @file_get_contents($fichero);
             if (is_string($guardado)) {
                 $d = json_decode($guardado, true);
-                if (is_array($d) && ($d['huella'] ?? null) === $huella && isset($d['pendientes'])) {
-                    return self::$pendientes = (bool)$d['pendientes'];
+                if (is_array($d) && ($d['huella'] ?? null) === $huella && ($d['pendientes'] ?? null) === false) {
+                    return self::$pendientes = false;
                 }
             }
         }
 
         $p = (bool)array_diff(array_keys(self::archivos($dir)), self::aplicadas($pdo));
         self::$pendientes = $p;
-        if ($huella !== null) self::guardarCache($fichero, $huella, $p);
+        if ($huella !== null && !$p) self::guardarCache($fichero, $huella, false);
         return $p;
     }
 

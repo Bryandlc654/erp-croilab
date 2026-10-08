@@ -39,8 +39,13 @@ function gm_ensure_schema(){ if (croilab_esquema_gestionado()) return;   /* el e
        «ID de cliente de OAuth» en Google, pega aquí Client ID + Secreto y pulsa
        «Conectar con Google» una vez. Google devuelve un permiso permanente
        (refresh token) que se guarda y ya sirve para siempre. --- */
-function gm_oauth_cfg(){ $id=gm_setting('google_oauth_client_id',''); $sec=gm_setting('google_oauth_client_secret',''); return ($id!==''&&$sec!=='')?['id'=>$id,'secret'=>$sec]:null; }
-function gm_configurada(){ return gm_oauth_cfg()!==null && gm_setting('google_oauth_refresh_token','')!==''; }
+/* El secreto y el refresh token van cifrados en la bóveda (propósito «gmet»,
+   migración 0051 y Croilab\Google\GoogleOAuth). Se leen siempre por aquí:
+   boveda_valor() también entiende lo que quedara en claro y lo cifra al leerlo. */
+require_once __DIR__ . '/boveda.php';
+function gm_secreto($k){ return trim((string)boveda_valor($k, 'gmet')); }
+function gm_oauth_cfg(){ $id=gm_setting('google_oauth_client_id',''); $sec=gm_secreto('google_oauth_client_secret'); return ($id!==''&&$sec!=='')?['id'=>$id,'secret'=>$sec]:null; }
+function gm_configurada(){ return gm_oauth_cfg()!==null && gm_secreto('google_oauth_refresh_token')!==''; }
 
 /* Dirección de retorno que hay que registrar EXACTA en Google (según cómo se abra el ERP). */
 function gm_redirect_uri(){
@@ -62,7 +67,7 @@ function gm_oauth_exchange($code){
   $c=gm_oauth_cfg(); if(!$c) return 'Faltan el ID de cliente y el secreto.';
   list($st,$body)=gm_http_post('https://oauth2.googleapis.com/token', http_build_query(['code'=>$code,'client_id'=>$c['id'],'client_secret'=>$c['secret'],'redirect_uri'=>gm_redirect_uri(),'grant_type'=>'authorization_code']), ['Content-Type: application/x-www-form-urlencoded']);
   $j=json_decode($body,true);
-  if($st===200 && !empty($j['refresh_token'])){ gm_setting_save('google_oauth_refresh_token',$j['refresh_token']); return true; }
+  if($st===200 && !empty($j['refresh_token'])){ if(!boveda_guardar('google_oauth_refresh_token',$j['refresh_token'],'gmet')) return 'No se ha podido guardar el permiso cifrado.'; return true; }
   if($st===200){ return 'Google no dio el permiso permanente. Vuelve a pulsar «Conectar» y acepta todo.'; }
   return 'Error de Google ('.$st.'): '.($j['error_description']??$j['error']??$body);
 }
@@ -89,7 +94,7 @@ function gm_b64url($s){ return rtrim(strtr(base64_encode($s),'+/','-_'),'='); }
 function gm_access_token(){
   static $cache=null; if($cache!==null) return $cache?:null;
   $cache=false;
-  $c=gm_oauth_cfg(); $rt=gm_setting('google_oauth_refresh_token',''); if(!$c || $rt==='') return null;
+  $c=gm_oauth_cfg(); $rt=gm_secreto('google_oauth_refresh_token'); if(!$c || $rt==='') return null;
   list($st,$body)=gm_http_post('https://oauth2.googleapis.com/token',
     http_build_query(['client_id'=>$c['id'],'client_secret'=>$c['secret'],'refresh_token'=>$rt,'grant_type'=>'refresh_token']),
     ['Content-Type: application/x-www-form-urlencoded']);

@@ -1,0 +1,38 @@
+/* Impresión de la hoja de factura (vista /finanzas/facturas/:id): solo sale
+   el papel, sin márgenes del navegador y con los fondos oscuros de la tabla y
+   del total (print-color-adjust). La hoja es siempre blanca, también en oscuro. */
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  body * {
+    visibility: hidden !important;
+  }
+  .fin-print,
+  .fin-print * {
+    visibility: visible !important;
+  }
+  .fin-print {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 16mm 15mm !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .fin-print * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .fin-no-print {
+    display: none !important;
+  }
+}

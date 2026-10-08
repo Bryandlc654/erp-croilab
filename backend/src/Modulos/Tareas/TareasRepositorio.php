@@ -23,23 +23,40 @@ class TareasRepositorio
     {
         $w = [];
         $p = [];
-        if ($f['view'] === 'mine') { $w[] = 't.responsable_id = ?'; $p[] = $f['yo']; }
-        if ($f['view'] === 'emp') { $w[] = 't.responsable_id = ?'; $p[] = $f['emp']; }
+        /* «Mis tareas» y «Tareas de…» cuentan también las asignadas por
+           task_assignees (no solo el responsable principal). */
+        if ($f['view'] === 'mine' || $f['view'] === 'emp') {
+            $w[] = '(t.responsable_id = ? OR EXISTS (SELECT 1 FROM task_assignees xa WHERE xa.task_id = t.id AND xa.admin_id = ?))';
+            $quien = $f['view'] === 'mine' ? $f['yo'] : $f['emp'];
+            array_push($p, $quien, $quien);
+        }
         if ($f['view'] === 'cliente') { $w[] = 't.client_id = ? AND t.list_id = ?'; array_push($p, $f['cli'], $f['list']); }
         if ($f['fe'] !== '') { $w[] = 't.estado = ?'; $p[] = $f['fe']; }
         /* En las vistas generales, sin filtro de estado no salen las completadas. */
         elseif ($f['view'] !== 'cliente') { $w[] = "t.estado <> 'completada'"; }
-        if ($f['view'] === 'all' && $f['fr']) { $w[] = 't.responsable_id = ?'; $p[] = $f['fr']; }
+        if ($f['view'] === 'all' && $f['fr']) {
+            $w[] = '(t.responsable_id = ? OR EXISTS (SELECT 1 FROM task_assignees xr WHERE xr.task_id = t.id AND xr.admin_id = ?))';
+            array_push($p, $f['fr'], $f['fr']);
+        }
+        if (($f['mes'] ?? '') !== '') { $w[] = 't.mes = ?'; $p[] = $f['mes']; }
         $where = 'WHERE 1' . ($w ? ' AND ' . implode(' AND ', $w) : '') . $acceso->sqlTareas('t');
 
         $st = $this->pdo->prepare("SELECT COUNT(*) FROM tasks t $where");
         $st->execute($p);
         $total = (int)$st->fetchColumn();
 
-        $orden = $f['view'] === 'cliente' ? 't.orden, t.id' : 'c.name, ' . self::ORDEN_ESTADOS . ', t.id';
+        $orden = $f['view'] === 'cliente' ? 't.orden, t.id' : 'c.name, ' . self::ORDEN_ESTADOS . ', t.orden, t.id';
         $st = $this->pdo->prepare($this->select() . " $where ORDER BY $orden LIMIT $limit OFFSET $offset");
         $st->execute($p);
         return [$this->conAsignados($st->fetchAll()), $total];
+    }
+
+    /** Meses (texto libre de `mes`) con tareas en una lista, en orden de aparición. */
+    public function mesesDeLista(int $listId): array
+    {
+        $st = $this->pdo->prepare("SELECT mes, COUNT(*) n, MIN(id) primero FROM tasks WHERE list_id = ? AND mes IS NOT NULL AND TRIM(mes) <> '' GROUP BY mes ORDER BY primero");
+        $st->execute([$listId]);
+        return array_map(fn($r) => ['mes' => (string)$r['mes'], 'n' => (int)$r['n']], $st->fetchAll());
     }
 
     public function buscar(int $id): ?array
@@ -50,29 +67,22 @@ class TareasRepositorio
         return $r ? $this->conAsignados([$r])[0] : null;
     }
 
+    /** Ficha completa (sin comentarios: van en su propio feed). */
     public function detalle(int $id): ?array
     {
         $t = $this->buscar($id);
         if (!$t) return null;
-        $st = $this->pdo->prepare('SELECT descripcion, etiquetas, mes, titulo_cliente, explicacion_cliente FROM tasks WHERE id = ?');
+        $st = $this->pdo->prepare('SELECT descripcion, descripcion_rich, titulo_cliente, explicacion_cliente, created_at, updated_at FROM tasks WHERE id = ?');
         $st->execute([$id]);
-        $t += array_map(fn($v) => $v ?? '', $st->fetch() ?: []);
-
-        $st = $this->pdo->prepare('SELECT c.id, c.admin_id, a.username, c.cuerpo, c.created_at FROM task_comments c
-                                   LEFT JOIN admins a ON a.id = c.admin_id WHERE c.task_id = ? ORDER BY c.created_at, c.id');
-        $st->execute([$id]);
-        $t['comentarios'] = array_map(fn($c) => [
-            'id' => (int)$c['id'], 'admin_id' => $c['admin_id'] === null ? null : (int)$c['admin_id'],
-            'username' => $c['username'], 'cuerpo' => (string)$c['cuerpo'], 'created_at' => (string)$c['created_at'],
-        ], $st->fetchAll());
-
-        $st = $this->pdo->prepare('SELECT id, texto, done FROM task_checklist WHERE task_id = ? ORDER BY done DESC, orden, id');
-        $st->execute([$id]);
-        $t['checklist'] = array_map(fn($c) => ['id' => (int)$c['id'], 'texto' => (string)$c['texto'], 'done' => (int)$c['done'] === 1], $st->fetchAll());
-
-        $st = $this->pdo->prepare('SELECT id, orig_name, filename FROM task_attachments WHERE task_id = ? ORDER BY id');
-        $st->execute([$id]);
-        $t['adjuntos'] = array_map(fn($a) => ['id' => (int)$a['id'], 'nombre' => (string)($a['orig_name'] ?: $a['filename']), 'filename' => (string)$a['filename']], $st->fetchAll());
+        $x = $st->fetch() ?: [];
+        /* La versión rica manda; las tareas que solo tienen texto plano se
+           editan a partir de él (el plano es un subconjunto del formato). */
+        $rich = (string)($x['descripcion_rich'] ?? '');
+        $t['descripcion'] = trim($rich) !== '' ? $rich : (string)($x['descripcion'] ?? '');
+        $t['titulo_cliente'] = (string)($x['titulo_cliente'] ?? '');
+        $t['explicacion_cliente'] = (string)($x['explicacion_cliente'] ?? '');
+        $t['created_at'] = (string)($x['created_at'] ?? '');
+        $t['updated_at'] = (string)($x['updated_at'] ?? '');
         return $t;
     }
 
@@ -91,6 +101,30 @@ class TareasRepositorio
         $this->pdo->prepare("UPDATE tasks SET $set WHERE id = ?")->execute([...array_values($campos), $id]);
     }
 
+    /** Siguiente `orden` al final de una lista (las tareas nuevas van abajo). */
+    public function siguienteOrden(int $listId): int
+    {
+        $st = $this->pdo->prepare('SELECT COALESCE(MAX(orden), 0) + 1 FROM tasks WHERE list_id = ?');
+        $st->execute([$listId]);
+        return (int)$st->fetchColumn();
+    }
+
+    /** Tareas de esa lista entre los ids dados (para reordenar sin tocar otras). */
+    public function idsDeLista(int $listId, array $ids): array
+    {
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+        if (!$ids) return [];
+        $st = $this->pdo->prepare('SELECT id FROM tasks WHERE list_id = ? AND id IN (' . implode(',', $ids) . ')');
+        $st->execute([$listId]);
+        return array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function reordenar(array $ids): void
+    {
+        $st = $this->pdo->prepare('UPDATE tasks SET orden = ? WHERE id = ?');
+        foreach (array_values($ids) as $i => $id) $st->execute([$i + 1, (int)$id]);
+    }
+
     /** Ids de los comentarios (para limpiar sus reacciones al borrar). */
     public function comentarios(int $id): array
     {
@@ -105,10 +139,33 @@ class TareasRepositorio
         $this->pdo->exec('DELETE FROM task_comment_reactions WHERE comment_id IN (' . implode(',', array_map('intval', $commentIds)) . ')');
     }
 
+    /* ---------- Actividad (historial de la ficha) ---------- */
+
+    public function anotar(int $taskId, ?int $adminId, string $tipo, string $detalle = ''): void
+    {
+        $this->pdo->prepare('INSERT INTO task_activity (task_id, admin_id, tipo, detalle) VALUES (?, ?, ?, ?)')
+            ->execute([$taskId, $adminId ?: null, mb_substr($tipo, 0, 30), mb_substr($detalle, 0, 300)]);
+    }
+
+    public function actividad(int $taskId): array
+    {
+        $st = $this->pdo->prepare('SELECT id, admin_id, tipo, detalle, created_at FROM task_activity WHERE task_id = ? ORDER BY id');
+        $st->execute([$taskId]);
+        $nombres = $this->equipo->nombres();
+        return array_map(fn($a) => [
+            'id' => (int)$a['id'],
+            'tipo' => (string)$a['tipo'],
+            'detalle' => (string)$a['detalle'],
+            'actor' => $a['admin_id'] !== null ? ($nombres[(int)$a['admin_id']] ?? null) : null,
+            'created_at' => (string)$a['created_at'],
+        ], $st->fetchAll());
+    }
+
     private function select(): string
     {
         return 'SELECT t.id, t.client_id, t.list_id, t.titulo, t.estado, t.prioridad, t.responsable_id, t.due_date, t.fecha_inicio,
-                       t.visible_cliente, c.name AS client_name, c.iniciales AS client_iniciales, l.nombre AS list_name
+                       t.visible_cliente, t.mes, t.etiquetas, t.orden, c.name AS client_name, c.iniciales AS client_iniciales,
+                       l.nombre AS list_name, l.tipo AS list_tipo
                 FROM tasks t LEFT JOIN clients c ON c.id = t.client_id LEFT JOIN task_lists l ON l.id = t.list_id';
     }
 
@@ -136,9 +193,13 @@ class TareasRepositorio
                 'due_date' => $r['due_date'],
                 'fecha_inicio' => $r['fecha_inicio'],
                 'visible_cliente' => (int)$r['visible_cliente'] === 1,
+                'mes' => (string)($r['mes'] ?? ''),
+                'etiquetas' => (string)($r['etiquetas'] ?? ''),
+                'orden' => (int)$r['orden'],
                 'client_name' => $r['client_name'],
                 'client_iniciales' => trim((string)$r['client_iniciales']),
                 'list_name' => $r['list_name'],
+                'list_tipo' => (string)($r['list_tipo'] ?: 'tareas'),
                 'asignados' => array_values(array_map(
                     fn($aid) => $this->equipo->persona($aid),
                     array_filter($asig, fn($aid) => isset($nombres[$aid]))

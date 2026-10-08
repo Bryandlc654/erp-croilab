@@ -1,6 +1,12 @@
-import { Check, Search, UserPlus, X } from 'lucide-react'
-import Avatar from '../../../shared/ui/Avatar'
+import type { MouseEvent } from 'react'
+import { Check, Eye, X } from 'lucide-react'
+import AvatarStack from '../../../shared/ui/AvatarStack'
 import Menu, { MenuItem } from '../../../shared/ui/Menu'
+import PersonPicker from '../../../shared/ui/PersonPicker'
+import { RowGrip } from '../../../shared/ui/SortableList'
+import { DateInput } from '../../../shared/ui/DatePicker'
+import { tonoVencimiento } from '../../../shared/lib/fechas'
+import type { useSortable } from '../../../shared/lib/useSortable'
 import type { Persona } from '../../../shared/schemas'
 import EstadoCirculo from './EstadoCirculo'
 import { ESTADOS, ORDEN_ESTADOS, PRIORIDADES } from '../constantes'
@@ -17,25 +23,41 @@ type Props = {
   puedeEditar: boolean
   puedeBorrar: boolean
   mostrarLista: boolean
-  /* El valor llega como texto (como en el formulario): '' = quitar. */
+  /* El valor llega como texto (como en el formulario): '' = quitar; asignados = ids separados por comas. */
   onCampo: (t: Tarea, campo: CampoEnLinea, valor: string) => void
+  /* Abrir la ficha completa (clic en la fila). */
   onAbrir: (t: Tarea) => void
   onBorrar: (t: Tarea) => void
+  /* Cajón de vista rápida (lupa). */
+  onVistaRapida?: (t: Tarea) => void
+  /* Menú contextual (clic derecho): Abrir, Marcar completada, Borrar. */
+  onMenu?: (t: Tarea, x: number, y: number) => void
+  /* Asa para reordenar (vista de cliente). */
+  asa?: ReturnType<ReturnType<typeof useSortable>['handleProps']>
 }
 
-export default function TareaFila({ t, equipo, puedeEditar, puedeBorrar, mostrarLista, onCampo, onAbrir, onBorrar }: Props) {
+export default function TareaFila({ t, equipo, puedeEditar, puedeBorrar, mostrarLista, onCampo, onAbrir, onBorrar, onVistaRapida, onMenu, asa }: Props) {
   const prio = PRIORIDADES.find((p) => p.value === t.prioridad) ?? PRIORIDADES[0]
-  const asignado = t.asignados[0] ?? null
   const completada = t.estado === 'completada'
+  const parar = (e: MouseEvent) => e.stopPropagation()
 
   return (
     <div
       role="row"
       onClick={() => onAbrir(t)}
-      className={`${COLUMNAS} cursor-pointer border-b border-line px-4 py-3 transition-colors last:border-b-0 hover:bg-[#fafbfc] dark:hover:bg-white/[.03]`}
+      onContextMenu={
+        onMenu
+          ? (e) => {
+              e.preventDefault()
+              onMenu(t, e.clientX, e.clientY)
+            }
+          : undefined
+      }
+      className={`${COLUMNAS} cursor-pointer border-b border-line px-4 py-3 transition-colors last:border-b-0 hover:bg-[#fafbfc] dark:hover:bg-white/[.03] ${asa ? 'md:pl-1.5' : ''}`}
     >
       {/* Nombre, con el círculo de estado a la izquierda */}
       <div className="flex min-w-0 basis-full items-center gap-3 md:basis-auto">
+        {asa && <RowGrip {...asa} onClick={parar} className="-mr-1.5 cursor-grab max-md:hidden" aria-label={`Mover ${t.titulo}`} />}
         <Menu
           label={`Estado: ${ESTADOS[t.estado]?.label ?? t.estado}`}
           disabled={!puedeEditar}
@@ -62,86 +84,48 @@ export default function TareaFila({ t, equipo, puedeEditar, puedeBorrar, mostrar
             ))
           }
         </Menu>
-        <span className={`min-w-0 truncate text-[13.5px] font-semibold ${completada ? 'text-muted line-through decoration-[1.5px]' : 'text-ink-strong'}`}>
-          {t.titulo}
-        </span>
-        {completada && (
-          <span className="shrink-0 rounded-md bg-[#e4f6ec] px-[7px] py-px text-[11px] font-semibold text-[#12854a] dark:bg-[#12854a]/20">Completada</span>
-        )}
-        {t.visible_cliente && (
-          <span className="shrink-0 rounded-[5px] bg-soft px-1.5 py-0.5 text-[9.5px] font-semibold tracking-[.2px] text-muted uppercase">cliente</span>
-        )}
-        {mostrarLista && t.list_name && (
-          <span className="shrink-0 rounded-md bg-soft px-[7px] py-px text-[11px] font-semibold whitespace-nowrap text-label">{t.list_name}</span>
-        )}
+        <span className={`min-w-0 truncate text-[13.5px] font-semibold ${completada ? 'text-muted line-through decoration-[1.5px]' : 'text-ink-strong'}`}>{t.titulo}</span>
+        {completada && <span className="shrink-0 rounded-md bg-[#e4f6ec] px-[7px] py-px text-[11px] font-semibold text-[#12854a] dark:bg-[#12854a]/20">Completada</span>}
+        {t.visible_cliente && <span className="shrink-0 rounded-[5px] bg-soft px-1.5 py-0.5 text-[9.5px] font-semibold tracking-[.2px] text-muted uppercase">cliente</span>}
+        {mostrarLista && t.list_name && <span className="shrink-0 rounded-md bg-soft px-[7px] py-px text-[11px] font-semibold whitespace-nowrap text-label">{t.list_name}</span>}
       </div>
 
-      {/* Persona asignada */}
-      <Menu
-        label="Persona asignada"
-        disabled={!puedeEditar}
-        panelClassName="max-h-72 overflow-y-auto"
-        trigger={() => (
-          <span className="flex min-w-0 items-center gap-2 rounded-[7px] px-1 py-1 hover:bg-soft">
-            {t.asignados.length > 0 ? (
-              <>
-                <span className="flex -space-x-1.5">
-                  {t.asignados.slice(0, 3).map((a) => (
-                    <Avatar key={a.id} nombre={a.username} foto={a.foto} size={24} className="ring-2 ring-page" />
-                  ))}
-                </span>
-                <span className="truncate text-[13px] text-ink">
-                  {t.asignados.length === 1 ? asignado!.username : `${t.asignados.length} asignados`}
-                </span>
-              </>
+      {/* Persona(s) asignada(s): varios, como el antiguo (set_asignados). */}
+      <div onClick={parar} className="min-w-0">
+        <PersonPicker
+          multiple
+          label="Persona asignada"
+          people={equipo}
+          disabled={!puedeEditar}
+          value={t.asignados.map((a) => a.id)}
+          onChange={(ids) => onCampo(t, 'asignados', ids.join(','))}
+          trigger={(elegidos) =>
+            elegidos.length > 0 || t.asignados.length > 0 ? (
+              <span className="flex min-w-0 items-center gap-2">
+                <AvatarStack people={t.asignados} size={24} overlap={9} />
+                <span className="truncate text-[13px] text-ink">{t.asignados.length === 1 ? t.asignados[0].username : `${t.asignados.length} asignados`}</span>
+              </span>
             ) : (
               <span className="flex items-center gap-1.5 text-[12.5px] text-label">
-                <UserPlus className="size-3.5" /> Asignar
+                <span className="flex size-6 items-center justify-center rounded-full bg-[#eef0f2] text-[12px] dark:bg-soft">＋</span> Asignar
               </span>
-            )}
-          </span>
-        )}
-      >
-        {(cerrar) => (
-          <>
-            {equipo.map((p) => (
-              <MenuItem
-                key={p.id}
-                on={t.responsable_id === p.id}
-                onClick={() => {
-                  cerrar()
-                  if (t.responsable_id !== p.id) onCampo(t, 'responsable_id', String(p.id))
-                }}
-              >
-                <Avatar nombre={p.username} foto={p.foto} size={20} />
-                <span className="flex-1 truncate">{p.username}</span>
-                {t.responsable_id === p.id && <Check className="size-3.5" />}
-              </MenuItem>
-            ))}
-            {t.responsable_id && (
-              <MenuItem
-                onClick={() => {
-                  cerrar()
-                  onCampo(t, 'responsable_id', '')
-                }}
-              >
-                <X className="size-3.5" /> Quitar responsable
-              </MenuItem>
-            )}
-          </>
-        )}
-      </Menu>
+            )
+          }
+        />
+      </div>
 
       {/* Fecha límite */}
-      <div onClick={(e) => e.stopPropagation()}>
-        <input
-          type="date"
-          lang="es"
+      <div onClick={parar}>
+        <DateInput
+          variant="inline"
+          size="sm"
           aria-label="Fecha límite"
           disabled={!puedeEditar}
-          value={t.due_date ?? ''}
-          onChange={(e) => onCampo(t, 'due_date', e.target.value)}
-          className="h-[37px] w-full rounded-[9px] border border-line bg-page px-2.5 text-[12.5px] text-ink [color-scheme:light] focus:border-[#c9ccd1] focus:outline-none disabled:opacity-70 dark:[color-scheme:dark]"
+          value={t.due_date}
+          placeholder="—"
+          tone={(iso) => (completada ? null : tonoVencimiento(iso))}
+          onChange={(v) => onCampo(t, 'due_date', v ?? '')}
+          className="w-full"
         />
       </div>
 
@@ -181,15 +165,15 @@ export default function TareaFila({ t, equipo, puedeEditar, puedeBorrar, mostrar
       </Menu>
 
       {/* Acciones */}
-      <div className="ml-auto flex items-center justify-end gap-1 md:ml-0" onClick={(e) => e.stopPropagation()}>
+      <div className="ml-auto flex items-center justify-end gap-1 md:ml-0" onClick={parar}>
         <button
           type="button"
-          onClick={() => onAbrir(t)}
+          onClick={() => (onVistaRapida ? onVistaRapida(t) : onAbrir(t))}
           className="inline-flex rounded-md p-1.5 text-label transition-colors hover:bg-soft hover:text-ink"
-          aria-label={`Abrir ${t.titulo}`}
-          title="Abrir"
+          aria-label={`Vista rápida de ${t.titulo}`}
+          title="Vista rápida"
         >
-          <Search className="size-4" strokeWidth={1.8} />
+          <Eye className="size-4" strokeWidth={1.8} />
         </button>
         {puedeBorrar && (
           <button

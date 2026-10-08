@@ -76,6 +76,12 @@ export default function Login() {
             ¿Has olvidado tu contraseña?
           </Link>
         </div>
+        {/* Los clientes entran por su portal, con su propia cuenta. */}
+        <div className="text-center">
+          <Link to="/portal/login" className={ENLACE}>
+            ¿Eres cliente? Entra en tu área →
+          </Link>
+        </div>
       </form>
     </AuthLayout>
   )

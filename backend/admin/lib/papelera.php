@@ -43,27 +43,54 @@ function ensure_papelera_schema() { if (croilab_esquema_gestionado()) return;   
     } catch (Exception $e) {}
 }
 
-/* Nombre bonito de cada tipo, para la lista de la papelera. */
+/* Nombre bonito de cada tipo, para la lista de la papelera: [etiqueta, icono,
+   ruta del front a la que se vuelve tras restaurar (+ id), permiso del módulo].
+   Las rutas son las del front nuevo (docs/migracion/RUTAS.md). Una lista
+   borrada es de TAREAS (antes enlazaba a listas.php, que es del CRM). */
 function pap_tipos() {
     return [
-        'tarea'     => ['Tarea',            'check',   'task.php?id='],
-        'cliente'   => ['Cliente',          'clients', 'client.php?id='],
-        'contacto'  => ['Contacto del CRM', 'crm',     'crm.php?open='],
-        'negocio'   => ['Negocio',          'trend',   'negocio.php?open='],
-        'factura'   => ['Factura',          'file',    'facturas.php?edit='],
-        'ticket'    => ['Ticket',           'ticket',  'support.php?t='],
-        'lista'     => ['Lista',            'list',    'listas.php?id='],
-        'acta'      => ['Acta',             'pencil',  'actas.php?id='],
+        'tarea'      => ['Tarea',            'check',   '/tareas/',               'ver.tareas'],
+        'cliente'    => ['Cliente',          'clients', '/clientes/',             'ver.clientes'],
+        'contacto'   => ['Contacto del CRM', 'crm',     '/crm/contactos/',        'ver.crm'],
+        'negocio'    => ['Negocio',          'trend',   '/crm/negocio?open=',     'ver.crm'],
+        'factura'    => ['Factura',          'file',    '/finanzas/facturas/',    'ver.finanzas'],
+        'ticket'     => ['Ticket',           'ticket',  '/soporte/',              'ver.soporte'],
+        'lista'      => ['Lista',            'list',    '',                       'ver.tareas'],
+        'acta'       => ['Acta',             'pencil',  '/actas/',                'ver.actas'],
+        'credencial' => ['Credencial',       'lock',    '',                       'ver.credenciales'],
+        'documento'  => ['Documento',        'file',    '',                       'ver.finanzas'],
         /* 'apunte', 'proyecto' y 'servicio' estaban declarados pero nunca se usaban
            (ninguna página los pasa a pap_borrar): eliminados (P3-06). */
     ];
 }
+function pap_tipo_permiso($t) { $m = pap_tipos(); return $m[$t][3] ?? 'ver.ajustes'; }
 function pap_tipo_label($t) { $m = pap_tipos(); return $m[$t][0] ?? ucfirst((string)$t); }
 function pap_tipo_icono($t) { $m = pap_tipos(); return $m[$t][1] ?? 'trash'; }
 function pap_tipo_url($t, $id) { $m = pap_tipos(); $b = $m[$t][2] ?? ''; return $b ? $b . (int)$id : ''; }
 
+/* Condición SQL de una tabla hija respecto al id de la madre (un solo `?`).
+   Sin `en`, la hija apunta a la madre: `fk = ?`. Con `en`, la hija cuelga de
+   otra hija: `en` es la cadena de tablas intermedias de la más cercana a la
+   más lejana, cada una [tabla, columna que apunta a la siguiente]. Ejemplo,
+   los asignados de los puntos de checklist de las tareas de una lista:
+     ['tabla'=>'chk_assignees', 'fk'=>'chk_id', 'en'=>[['task_checklist','task_id'], ['tasks','list_id']]]
+     → chk_id IN (SELECT id FROM task_checklist WHERE task_id IN (SELECT id FROM tasks WHERE list_id = ?))
+   null si algún nombre no es válido o alguna tabla intermedia no existe. */
+function pap_condicion_hija($fk, $en = [], $pdo = null) {
+    if (!preg_match('/^[a-z_]+$/i', (string)$fk)) return null;
+    $sub = '?';
+    foreach (array_reverse((array)$en) as $paso) {
+        [$t, $col] = array_values((array)$paso) + [null, null];
+        if (!preg_match('/^[a-z_]+$/i', (string)$t) || !preg_match('/^[a-z_]+$/i', (string)$col)) return null;
+        if (!db_tabla_existe($t, $pdo)) return null;
+        $sub = "(SELECT id FROM `$t` WHERE `$col` " . ($sub === '?' ? '= ?' : "IN $sub") . ')';
+    }
+    return $sub === '?' ? "`$fk` = ?" : "`$fk` IN $sub";
+}
+
 /* Borra de verdad, pero guardando antes la foto. Devuelve el id de papelera
-   (para ofrecer «Deshacer») o 0 si no se pudo. */
+   (para ofrecer «Deshacer») o 0 si no se pudo. Cada hija es
+   ['tabla'=>…, 'fk'=>…] y opcionalmente 'en' (ver pap_condicion_hija). */
 function pap_borrar($tabla, $id, $tipo, $titulo = '', $hijos = []) {
     ensure_papelera_schema();
     $id = (int)$id;
@@ -96,14 +123,19 @@ function pap_borrar($tabla, $id, $tipo, $titulo = '', $hijos = []) {
                hijas que fotografiar ni que borrar. Una que sí existe y falla, sí:
                ese error sube y manda deshacer todo. */
             if (!db_tabla_existe($ht, $pdo)) continue;
-            $q = $pdo->prepare("SELECT * FROM `$ht` WHERE `$fk`=?"); $q->execute([$id]);
-            $snapHijos[] = ['tabla'=>$ht, 'fk'=>$fk, 'filas'=>$q->fetchAll(PDO::FETCH_ASSOC)];
+            $donde = pap_condicion_hija($fk, $h['en'] ?? [], $pdo);
+            if ($donde === null) continue;
+            $q = $pdo->prepare("SELECT * FROM `$ht` WHERE $donde"); $q->execute([$id]);
+            $snapHijos[] = ['tabla'=>$ht, 'fk'=>$fk, 'donde'=>$donde, 'filas'=>$q->fetchAll(PDO::FETCH_ASSOC)];
         }
 
-        /* Primero las hijas, luego la madre: al revés puede chocar con las claves. */
-        foreach ($snapHijos as $h) {
-            $pdo->prepare("DELETE FROM `{$h['tabla']}` WHERE `{$h['fk']}`=?")->execute([$id]);
+        /* Primero las hijas (en el orden pedido: las nietas antes que sus madres,
+           porque su condición pasa por ellas), luego la madre. */
+        foreach ($snapHijos as &$h) {
+            $pdo->prepare("DELETE FROM `{$h['tabla']}` WHERE {$h['donde']}")->execute([$id]);
+            unset($h['donde']);
         }
+        unset($h);
         $pdo->prepare("DELETE FROM `$tabla` WHERE id=?")->execute([$id]);
 
         $me = function_exists('current_admin') ? current_admin() : null;
@@ -172,7 +204,7 @@ function pap_undo_flash($tid, $msg = 'Elemento eliminado') {
 /* Atajo: borra y deja el aviso de una sola llamada. Devuelve el id de papelera. */
 function pap_borrar_flash($tabla, $id, $tipo, $titulo = '', $hijos = [], $msg = '') {
     $tid = pap_borrar($tabla, $id, $tipo, $titulo, $hijos);
-    if ($tid) pap_undo_flash($tid, $msg ?: (pap_tipo_label($tipo) . ' eliminad' . (in_array($tipo,['tarea','factura','lista'],true)?'a':'o')));
+    if ($tid) pap_undo_flash($tid, $msg ?: (pap_tipo_label($tipo) . ' eliminad' . (in_array($tipo,['tarea','factura','lista','acta','credencial'],true)?'a':'o')));
     return $tid;
 }
 
@@ -236,6 +268,13 @@ function pap_restaurar($tid) {
     }
     db_tx_commit($pdo);
 
+    /* Lo que al borrar solo soltó la referencia (horas, facturas, apuntes,
+       contactos, negocios de un cliente) vuelve a apuntar a lo restaurado. */
+    if (!empty($d['refs']) && is_array($d['refs'])) {
+        try { pap_reenlazar_refs((int)$t['ref_id'], $d['refs']); }
+        catch (Throwable $e) { error_log('pap_restaurar refs trash#' . $tid . ': ' . $e->getMessage()); }
+    }
+
     /* Republica el portal del cliente afectado: antes, restaurar una tarea o una
        lista no volvía a publicar y el cliente seguía viendo la versión vieja (P2-10). */
     if (function_exists('publicar_progreso')) {
@@ -246,7 +285,66 @@ function pap_restaurar($tid) {
     }
 
     return ['ok'=>true, 'id'=>(int)$t['ref_id'], 'tipo'=>(string)$t['tipo'],
-            'msg'=>pap_tipo_label($t['tipo']) . ' restaurad' . (in_array($t['tipo'],['tarea','factura','lista','acta'],true)?'a':'o') . '.'];
+            'msg'=>pap_tipo_label($t['tipo']) . ' restaurad' . (in_array($t['tipo'],['tarea','factura','lista','acta','credencial'],true)?'a':'o') . '.'];
+}
+
+/* Tablas que al borrar un cliente solo pierden la referencia (no se borran).
+   La foto de la papelera guarda en `refs` qué filas eran suyas. */
+if (!defined('PAP_REFS_CLIENTE')) define('PAP_REFS_CLIENTE', ['accounting', 'invoices', 'contacts', 'deals']);
+
+/* Al restaurar un cliente, sus horas, facturas, apuntes, contactos y negocios
+   vuelven a ser suyos, pero solo los que nadie haya enlazado a otro cliente
+   mientras tanto (client_id sigue a NULL). Las horas recuperan además su
+   tarea si esa tarea ha vuelto con el cliente.
+   $refs = ['time_entries' => [[id, task_id], …], 'invoices' => [ids], …]
+   Compartida: la usa pap_restaurar() y la puede usar quien restaure a mano. */
+function pap_reenlazar_refs($clientId, $refs) {
+    $clientId = (int)$clientId;
+    if (!$clientId || !is_array($refs)) return;
+    $pdo = db();
+    foreach (PAP_REFS_CLIENTE as $t) {
+        $ids = array_values(array_filter(array_map('intval', (array)($refs[$t] ?? []))));
+        if (!$ids || !db_tabla_existe($t, $pdo)) continue;
+        $pdo->prepare("UPDATE `$t` SET client_id = ? WHERE client_id IS NULL AND id IN (" . implode(',', $ids) . ')')->execute([$clientId]);
+    }
+    if (empty($refs['time_entries']) || !db_tabla_existe('time_entries', $pdo)) return;
+    $up = $pdo->prepare('UPDATE time_entries SET client_id = ?, task_id = ? WHERE id = ? AND client_id IS NULL AND task_id IS NULL');
+    $q = $pdo->prepare('SELECT 1 FROM tasks WHERE id = ? AND client_id = ?');
+    foreach ((array)$refs['time_entries'] as $te) {
+        if (!is_array($te) || count($te) < 2) continue;
+        $te = array_values($te);
+        $tarea = $te[1] !== null ? (int)$te[1] : null;
+        if ($tarea) {
+            $q->execute([$tarea, $clientId]);
+            if (!$q->fetchColumn()) $tarea = null;
+        }
+        $up->execute([$clientId, $tarea, (int)$te[0]]);
+    }
+}
+
+/* Lo que se va para siempre de la papelera puede dejar filas que solo tenían
+   sentido mientras se podía restaurar: las respuestas de los tickets de un
+   cliente borrado se quedan en support_replies (el ticket vuelve con su id al
+   restaurar). Si el cliente caduca o se purga, esas respuestas sobran. Recibe
+   las filas de `trash` que se van a borrar (con su `datos`). */
+function pap_limpiar_tras_purga(array $filas) {
+    $tickets = [];
+    foreach ($filas as $f) {
+        if (($f['tabla'] ?? '') !== 'clients') continue;
+        $d = json_decode((string)($f['datos'] ?? ''), true);
+        foreach ((array)($d['hijos'] ?? []) as $h) {
+            if (($h['tabla'] ?? '') !== 'support_tickets') continue;
+            foreach ((array)($h['filas'] ?? []) as $r) if (!empty($r['id'])) $tickets[] = (int)$r['id'];
+        }
+    }
+    $tickets = array_values(array_unique(array_filter($tickets)));
+    if (!$tickets || !db_tabla_existe('support_replies')) return 0;
+    /* Solo las de tickets que no hayan vuelto a existir (restaurados por otro camino). */
+    $in = implode(',', $tickets);
+    $vivos = db_tabla_existe('support_tickets') ? db()->query("SELECT id FROM support_tickets WHERE id IN ($in)")->fetchAll(PDO::FETCH_COLUMN) : [];
+    $muertos = array_diff($tickets, array_map('intval', $vivos));
+    if (!$muertos) return 0;
+    return (int)db()->exec('DELETE FROM support_replies WHERE ticket_id IN (' . implode(',', $muertos) . ')');
 }
 
 /* INSERT genérico a partir de una fila fotografiada. Salta columnas que ya no
@@ -287,26 +385,40 @@ function pap_contar() {
 function pap_vaciar($tid = 0) {
     ensure_papelera_schema();
     try {
-        if ((int)$tid) db()->prepare('DELETE FROM trash WHERE id=?')->execute([(int)$tid]);
-        else db()->exec('DELETE FROM trash');
+        if ((int)$tid) {
+            $st = db()->prepare("SELECT id, tabla, datos FROM trash WHERE id=? AND tabla='clients'"); $st->execute([(int)$tid]);
+            $filas = $st->fetchAll();
+            db()->prepare('DELETE FROM trash WHERE id=?')->execute([(int)$tid]);
+        } else {
+            $filas = db()->query("SELECT id, tabla, datos FROM trash WHERE tabla='clients'")->fetchAll();
+            db()->exec('DELETE FROM trash');
+        }
     } catch (Exception $e) { return false; }
+    try { pap_limpiar_tras_purga($filas); } catch (Throwable $e) { error_log('pap_vaciar respuestas: '.$e->getMessage()); }
     try { pap_limpiar_archivos_huerfanos(); } catch (Throwable $e) { error_log('pap_vaciar huérfanos: '.$e->getMessage()); }
     return true;
 }
 
 /* Limpieza automática de lo que lleva más de PAP_DIAS días. Si ha caducado algo,
-   también se barren los archivos que se hayan quedado sin dueño. */
-function pap_purga() {
-    static $done = false; if ($done) return; $done = true;
+   también se barren los archivos que se hayan quedado sin dueño. Devuelve
+   cuántos elementos han caducado (0 si ya se hizo en esta petición, salvo
+   con $forzar: el cron la llama así). */
+function pap_purga($forzar = false) {
+    static $done = false; if ($done && !$forzar) return 0; $done = true;
     $n = 0;
     try {
+        $st = db()->prepare("SELECT id, tabla, datos FROM trash WHERE tabla='clients' AND created_at < (NOW() - INTERVAL ? DAY)");
+        $st->execute([(int)PAP_DIAS]);
+        $clientes = $st->fetchAll();
         $st = db()->prepare('DELETE FROM trash WHERE created_at < (NOW() - INTERVAL ? DAY)');
         $st->execute([(int)PAP_DIAS]);
         $n = (int)$st->rowCount();
+        if ($clientes) pap_limpiar_tras_purga($clientes);
     } catch (Exception $e) { error_log('pap_purga: '.$e->getMessage()); }
     if ($n > 0) {
         try { pap_limpiar_archivos_huerfanos(); } catch (Throwable $e) { error_log('pap_purga huérfanos: '.$e->getMessage()); }
     }
+    return $n;
 }
 
 /* ---------- Archivos huérfanos de uploads/ ----------

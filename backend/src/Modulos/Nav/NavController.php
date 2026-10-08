@@ -23,12 +23,25 @@ class NavController
                              AND (snooze_until IS NULL OR snooze_until <= NOW())");
         $st->execute([$acc->adminId]);
         require_once __DIR__ . '/../../../admin/lib/marca.php';
+        $marca = marca_agencia();
         return [
-            'marca' => marca_agencia()['name'],
+            'marca' => $marca['name'],
+            'marca_info' => ['logo' => $marca['logo'], 'color' => $marca['color']],
             'pendientes' => (int)$pend,
             'no_leidas' => (int)$st->fetchColumn(),
             'clientes' => $this->clientes->contadores($acc),
+            // Mensajes del chat sin leer en todas sus salas (contador del raíl).
+            'chat_no_leidos' => $acc->puede('ver.chat') ? $this->chatNoLeidos($acc->adminId) : 0,
         ];
+    }
+
+    private function chatNoLeidos(int $adminId): int
+    {
+        try {
+            return (new \Croilab\Modulos\Comunicacion\Chat\ChatRepositorio(db()))->noLeidosTotal($adminId);
+        } catch (\Throwable $e) {
+            return 0;   // sin las tablas del chat, el menú sigue funcionando
+        }
     }
 
     public function equipo(Request $req): array
